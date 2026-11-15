@@ -180,7 +180,16 @@ exports.episode = catchAsync(async (req, res) => {
     return res.status(404).send({ status: "error", message: "Episode not found" });
   }
 
-  return res.status(200).send(episode);
+  if (!req.sessionAccount) return res.status(200).send(episode);
+
+  // Con sesion se adjunta lo que el reproductor necesita para retomar el
+  // episodio donde se dejo y saber si ya se vio.
+  const history = await Library.History.findOne({
+    where: { accountId: req.sessionAccount.id, episodeId: episode.id },
+    attributes: ["progress", "duration", "completed"],
+  });
+
+  return res.status(200).send({ ...episode.toJSON(), history });
 });
 
 exports.comments = catchAsync(async (req, res) => {

@@ -30,6 +30,7 @@ router.get("/:malId/episodes",
 );
 
 router.get("/:malId/episodes/:number",
+  middlewares.auth.optional,
   middlewares.anime.anime,
   middlewares.anime.local,
   controllers.anime.episode,
