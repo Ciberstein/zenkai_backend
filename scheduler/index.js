@@ -190,6 +190,25 @@ const init = async () => {
   }
 
   syslog.ok('SCHEDULER STATUS', `${JOBS.length} JOBS SCHEDULED`);
+
+  await bootstrap();
+};
+
+// Con la base vacia (primer despliegue) o con el barrido a medias, lanza el
+// catalogo completo al arrancar en vez de esperar al cron del domingo. Si el
+// barrido ya termino no hace nada, asi que un redeploy no vuelve a pedir 30.000
+// titulos a MyAnimeList. `SYNC_ON_BOOT=false` lo desactiva.
+const bootstrap = async () => {
+  if (process.env.SYNC_ON_BOOT === 'false') return;
+
+  try {
+    if (!(await catalog.resumePending())) return;
+
+    const { status } = start('catalog:full-sync', { trigger: 'boot' });
+    syslog.info('SCHEDULER', `Catálogo pendiente: sincronización inicial ${status === 'started' ? 'lanzada' : 'ya en curso'}`);
+  } catch (err) {
+    syslog.fail('Scheduler', `sincronización inicial: ${err.message}`);
+  }
 };
 
 module.exports = { init, start, list, JOBS };
