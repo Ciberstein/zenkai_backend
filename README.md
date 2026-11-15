@@ -1,147 +1,159 @@
 # Zenkai — Backend
 
-API REST de la plataforma de streaming de anime. Node + Express + Sequelize
-(PostgreSQL), con Redis como cache de la API publica de
-[Jikan](https://docs.api.jikan.moe) (MyAnimeList).
+REST API for the Zenkai anime streaming platform. Node.js + Express + Sequelize
+(PostgreSQL), with Redis for caching, rate limiting and job locks.
 
-## Arranque
+The anime catalog is **mirrored into Postgres** from the official MyAnimeList API
+(plus [Jikan](https://docs.api.jikan.moe) for the data MAL does not expose), so
+public requests never hit an upstream API.
+
+## Getting started
 
 ```bash
 npm install
-cp .env.example .env   # completar credenciales
+cp .env.example .env   # fill in the credentials
 npm start              # nodemon server.js
 ```
 
-## Estructura
+On boot the server authenticates against the database, creates the schemas
+(`anime`, `accounts`, `app`, `library`), runs the idempotent migrations, seeds the
+base data (roles, config, languages, genres) and starts the scheduler. If the
+catalog has never been fully synced, it also kicks off the initial sync in the
+background (see [Catalog sync](#catalog-sync)).
+
+## Environment variables
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `DB_DIALECT` | yes | `postgres` |
+| `DB_HOST` `DB_PORT` `DB_USERNAME` `DB_PASSWORD` `DB_DATABASE` | yes | PostgreSQL connection |
+| `FRONTEND_DOMAIN` | yes | **Public** URL of the frontend, with protocol (e.g. `https://zenkai.example.com`). Used only by CORS |
+| `NODE_ENV` | yes | `development` or `production`. Production enables `secure` + `sameSite=none` cookies |
+| `PORT` | no | HTTP port (default `3010`; Railway injects it) |
+| `JWT_SECRET_SEED` | yes | Secret used to sign tokens |
+| `JWT_EXPIRE_IN` / `JWT_REFRESH_EXPIRE_IN` | no | Access / refresh lifetime (`15m` / `30d`) |
+| `MAL_CLIENT_ID` | yes for sync | Client ID of a MyAnimeList app ([myanimelist.net/apiconfig](https://myanimelist.net/apiconfig), free) |
+| `JIKAN_BASE_URL` / `JIKAN_CACHE_TTL` | no | Jikan endpoint and cache TTL in seconds |
+| `REDIS_URL` | recommended | Redis connection URL (default `redis://localhost:6379`) |
+| `SYNC_ON_BOOT` | no | Set to `false` to disable the initial catalog sync on startup |
+
+## Project structure
 
 ```
-app.js            Express, CORS, helmet, rate limit y montaje de /api/v1
-server.js         Boot: auth DB, schemas, sync, migraciones y seeders
-cors/             Politica de origenes permitidos (deriva de FRONTEND_DOMAIN)
-database/         Conexion, creacion de schemas y migraciones idempotentes
-models/           Modelos Sequelize por dominio + init.models.js (relaciones)
-seeders/          Datos base (roles, config, idiomas, generos) + data/
-routes/           Routers por grupo: auth, public, user (/me), admin
-middlewares/      Validacion y carga de recursos, mismo arbol que routes/
-controllers/      Respuestas HTTP, mismo arbol que routes/
-services/         Integraciones: jikan, catalog (espejo), redis, auth, logger
-scheduler/        Cron: refresco diario y continuacion del backfill
-scripts/          Tareas de una sola vez (backfill del catalogo)
-utils/            Helpers puros (appError, catchAsync, jwt, hash, paginacion)
+app.js            Express, CORS, helmet, rate limit and /api/v1 mounting
+server.js         Boot: DB auth, schemas, sync, migrations, seeders, scheduler
+cors/             Allowed-origins policy (derived from FRONTEND_DOMAIN)
+database/         Connection, schema creation and idempotent migrations
+models/           Sequelize models per domain + init.models.js (associations)
+seeders/          Base data (roles, config, languages, genres) + data/
+routes/           Routers per group: auth, public, user (/me), admin
+middlewares/      Validation and resource loading, same tree as routes/
+controllers/      HTTP responses, same tree as routes/
+services/         Integrations: jikan, catalog (mirror), redis, auth, logger
+scheduler/        Cron jobs and their handlers
+scripts/          One-off tasks (catalog backfill, episode lists)
+utils/            Pure helpers (appError, catchAsync, jwt, hash, pagination)
 ```
 
-El flujo de una peticion es siempre el mismo:
-`routes -> middlewares (valida y carga en req) -> controllers (responde)`.
+A request always follows the same flow:
+`routes -> middlewares (validate and load into req) -> controllers (respond)`.
 
-## Grupos de rutas
+## API groups
 
-| Prefijo             | Acceso                    | Contenido                                    |
-| ------------------- | ------------------------- | -------------------------------------------- |
-| `/api/v1/auth`      | publico                   | register, login, logout, refresh, validate   |
-| `/api/v1/public`    | publico                   | catalogo, fichas, episodios, config, idiomas |
-| `/api/v1/me`        | sesion requerida          | cuenta, perfil, watchlist, favoritos, historial |
-| `/api/v1/admin`     | authority >= 30000        | cuentas, catalogo, episodios, fuentes, logs  |
+| Prefix | Access | Contents |
+| --- | --- | --- |
+| `/api/v1/auth` | public | register, login, logout, refresh, validate |
+| `/api/v1/public` | public (optional session) | catalog, anime pages, episodes, config, languages |
+| `/api/v1/me` | session required | account, profile, watchlist, favorites, watch history |
+| `/api/v1/admin` | authority >= 30000 | accounts, catalog, episodes, sources, jobs, logs |
 
-## Espejo local del catalogo
+`GET /api/v1/public/anime/:malId/episodes/:number` accepts an optional session: when
+the caller is logged in the response includes their `history`
+(`progress`, `duration`, `completed`) so the player can resume and mark episodes as
+watched. Guests get the plain episode.
 
-El catalogo publico **no consulta Jikan**: se sirve desde Postgres. Jikan solo
-alimenta el espejo.
+## Catalog sync
+
+The public catalog is served from Postgres. The upstream APIs only feed the mirror.
 
 ```bash
-npm run sync:catalog             # backfill completo (~30.400 titulos, ~25 min)
-npm run sync:catalog -- 50       # solo 50 paginas (1.250 titulos)
-npm run sync:catalog -- 50 top   # forzando la fuente alternativa
+npm run sync:catalog             # full backfill (~30,000 titles)
+npm run sync:catalog -- 50       # only 50 pages (1,250 titles)
+npm run sync:catalog -- 50 mal   # force a source
+npm run sync:episodes            # episode lists for the 100 most popular titles
+npm run sync:episodes -- 500     # ... or 500 titles
 ```
 
-**Una sola fuente: la API oficial de MyAnimeList**
-(`api.myanimelist.net/v2/anime/ranking`). 500 entradas por peticion, el catalogo
-entero en ~2,5 min. El Client ID se saca registrando una app en
-[myanimelist.net/apiconfig](https://myanimelist.net/apiconfig) (gratis) y se pega
-en `MAL_CLIENT_ID`.
+On a fresh deployment you do not need to run anything by hand: if the backfill has
+not finished, the server launches `catalog:full-sync` in the background right after
+starting (a redeploy does nothing once it is done). Set `SYNC_ON_BOOT=false` to
+opt out. Without `MAL_CLIENT_ID` the job fails and is retried on the next boot.
 
-Hubo dos fuentes de Jikan como respaldo y se retiraron: cuando Jikan falla es
-porque no alcanza a MyAnimeList, o sea que si la oficial esta caida el respaldo
-tambien lo esta. Jikan se quedo solo para lo que la oficial no expone.
+### Data sources
 
-La oficial devuelve `tv`/`finished_airing`/`friday` donde Jikan daba
-`TV`/`Finished Airing`/`Fridays`; el mapper lo normaliza al escribir para que los
-filtros y el calendario sigan valiendo. Todo se guarda por `mal_id` con upsert,
-asi que resincronizar nunca duplica.
-
-### Reparto de fuentes
-
-| Dato | Fuente | Por que |
+| Data | Source | Why |
 | --- | --- | --- |
-| Catalogo, fichas, metricas, temporadas | MAL oficial | Autoritativa y rapida |
-| Recomendaciones y relacionados | MAL oficial | Vienen en la propia ficha |
-| **Listas de episodios** | **Jikan** | `/anime/{id}/episodes` responde 403 en la oficial |
-| Personajes | Jikan | La oficial ignora el campo `characters` |
-| Enlaces de video | ninguna | No existen en ninguna API; se cargan a mano |
+| Catalog, details, metrics, seasons | Official MAL API | Authoritative and fast (500 entries per request) |
+| Recommendations and related titles | Official MAL API | Included in the detail response |
+| **Episode lists** | **Jikan** | `/anime/{id}/episodes` is not available on the official API |
+| Characters | Jikan | The official API ignores the `characters` field |
+| Video links | none | No API provides them; they are added through the admin panel |
 
-**Una pagina caida no tumba el trabajo**: se anota en `failedPages`, se sigue
-con la siguiente y al final se repescan. Solo se aborta tras 15 fallos seguidos,
-que ya no es intermitencia sino que MyAnimeList esta caido del todo.
+Everything is stored by `mal_id` with upserts, so re-syncing never duplicates rows
+and never overwrites what the admin panel manages (`featured`, `visible`, banner).
+A failed page does not abort the run: it is recorded in `failedPages`, the sync
+continues and the pages are retried at the end. It only aborts after 15 consecutive
+failures. The sync is **resumable**: the cursor lives in `anime.anime_sync_state`.
 
-Es **reanudable**: el cursor vive en `anime.anime_sync_state`, asi que se puede
-cortar con Ctrl+C, o caerse Jikan a mitad, y la siguiente ejecucion sigue por
-donde iba, repescando ademas las paginas que quedaron pendientes. Volver a sincronizar un titulo no
-duplica nada ni pisa lo que gestiona el panel (`featured`, `visible`, banner).
+### Scheduled jobs
 
-### Episodios
+All times are UTC.
 
-```bash
-npm run sync:episodes           # 100 titulos, por orden de popularidad
-npm run sync:episodes -- 500    # 500 titulos
-```
-
-Trae las **listas** de episodios (numero, titulo, fecha, filler) de los titulos
-ya replicados, empezando por los mas populares: con MAL cayendose a ratos,
-conviene gastar las peticiones que funcionan en lo que el usuario ve primero.
-Cada titulo queda marcado en `episodesSyncedAt` y no se vuelve a pedir.
-
-Los **enlaces de video** no salen de aqui: Jikan no los tiene. Se cargan desde
-el panel (`anime_sources`), uno por servidor/idioma/calidad.
-
-Despues el cron lo mantiene al dia (horario en UTC):
-
-| Trabajo | Cuando | Que hace |
+| Job | When | What it does |
 | --- | --- | --- |
-| `catalog:refresh` | todos los dias, 05:00 | Score, miembros y episodios de lo que esta en emision, de los proximos estrenos y de lo mas popular |
-| `catalog:airing-episodes` | cada 6 horas | Capitulos nuevos de las series en emision: 80 por tanda, las que mas tiempo llevan sin revisarse, y solo desde la ultima pagina de episodios conocida |
-| `catalog:full-sync` | domingos, 03:00 | Barrido completo del catalogo (~30.000 titulos, menos de un minuto con la API oficial). No pisa `featured`, `visible` ni el banner |
-| `catalog:backfill` | cada hora | Continua el barrido si quedo a medias; no hace nada si esta completo |
-| `catalog:episodes` | cada hora (:30) | Listas de episodios de 40 titulos populares que aun no las tienen; no hace nada si no queda ninguno |
+| `catalog:refresh` | daily, 05:00 | Score, members and episodes for airing, upcoming and top titles |
+| `catalog:airing-episodes` | every 6 hours | New episodes of airing series, 80 per batch, oldest-checked first |
+| `catalog:full-sync` | Sundays, 03:00 | Full catalog sweep (under a minute with the official API) |
+| `catalog:backfill` | every hour | Continues an unfinished sweep; no-op when complete |
+| `catalog:episodes` | every hour (:30) | Episode lists for 40 popular titles that do not have them yet; no-op when none are left |
 
-Cada ejecucion se registra en `anime.anime_sync_state` (fila `job:<nombre>`: estado,
-inicio, fin, resultado) y se puede ver y lanzar a mano desde **Admin → Tareas**
-(`GET /api/v1/admin/jobs`, `POST /api/v1/admin/jobs/:name/run`, esta ultima solo
-authority >= 40000). Con varias instancias de la API, cada trabajo toma un bloqueo en
-Redis (`lock:<nombre>`) para que no corra dos veces; `full-sync` y `backfill` comparten
-el suyo porque recorren el mismo cursor. Si Redis no responde, se cae al control en
-memoria del proceso en vez de dejar de ejecutar.
+Each run is recorded in `anime.anime_sync_state` (row `job:<name>`: status, start,
+end, result) and can be viewed and triggered from **Admin → Jobs**
+(`GET /api/v1/admin/jobs`, `POST /api/v1/admin/jobs/:name/run`; the latter requires
+authority >= 40000). With several API instances each job takes a Redis lock
+(`lock:<name>`) so it never runs twice; `full-sync` and `backfill` share one lock
+because they walk the same cursor. If Redis is down, jobs fall back to in-process
+control instead of stopping.
 
-Ademas, una ficha que se visita y lleva mas de 14 dias sin refrescar se
-revalida sola contra Jikan; si falla, se sirve igual desde base.
+## Design notes
 
-Lo que **no** se replica: personajes y recomendaciones (colas largas que no
-justifican el espacio) y los episodios, que se traen bajo demanda desde el panel
-solo para los titulos que se emiten. Las imagenes son enlaces al CDN de MAL.
+- **Jikan only provides metadata.** It has no video: playable links live in
+  `anime.anime_sources`, one per server/language/quality. Being in the catalog does
+  not mean being watchable — the `available` flag tells apart the ~29,000 MAL
+  entries from the titles that actually have episodes with sources.
+- **Shared Jikan queue across processes** (`services/modules/jikan.service.js`).
+  It respects both of Jikan's limits: 400 ms between calls (3 req/s) **and** a
+  sliding window of 50 per minute. The permit is requested from Redis with a Lua
+  script because the limit is per IP: the API and the sync scripts share the quota.
+  If Redis is down it falls back to a local limiter. A 429 opens a shared 60 s
+  cooldown. The cache keeps responses for 7 days and serves the stale copy if the
+  upstream fails.
+- **Redis is optional at runtime.** Cache reads fail fast and behave as a miss
+  (`enableOfflineQueue: false`, 1 s command timeout), so a dead Redis degrades the
+  API instead of hanging it.
+- **httpOnly cookie authentication** (`zk_access` / `zk_refresh`) with refresh
+  rotation on every use and per-session revocation in the database.
+- **Numeric `authority`** instead of a string role: permissions are a single
+  comparison (`>= 30000` staff, `>= 40000` admin).
 
-## Notas de diseno
+## Deploying on Railway
 
-- **Jikan solo aporta metadata.** No entrega video: los enlaces reproducibles
-  viven en `anime.anime_sources`, uno por servidor/idioma/calidad. Estar en el
-  catalogo no implica poder verlo: el flag `available` distingue las ~29.000
-  fichas de MAL de lo que de verdad tiene episodios con fuentes.
-- **Cola hacia Jikan compartida entre procesos** (`services/modules/jikan.service.js`).
-  Respeta los dos techos de su API: 400 ms entre llamadas (3 req/s) **y** ventana
-  deslizante de 50 por minuto (el limite real es 60). El permiso se pide a Redis
-  con un script Lua, porque el limite es **por IP**: la API y los scripts de
-  sincronizacion comparten cuota y un limitador en memoria haria que cada proceso
-  se creyera solo. Si Redis no responde, se cae al limitador local. Un 429 abre un
-  cooldown de 60 s que tambien se comparte, en vez de insistir. La cache guarda 7 dias y sirve la copia vieja si el upstream
-  falla, asi que una caida de MyAnimeList no se nota.
-- **Autenticacion por cookies httpOnly** (`zk_access` / `zk_refresh`) con
-  rotacion del refresh en cada uso y revocacion por sesion en base de datos.
-- **`authority` numerica** en vez de rol string: los permisos son una sola
-  comparacion (`>= 30000` staff, `>= 40000` admin).
+1. Add a **PostgreSQL** and a **Redis** service to the project.
+2. In the backend service variables, reference them:
+   `REDIS_URL=${{Redis.REDIS_URL}}` (private network) and the `DB_*` values from
+   the Postgres service.
+3. Set `NODE_ENV=production`, `JWT_SECRET_SEED`, `MAL_CLIENT_ID` and
+   `FRONTEND_DOMAIN` (the frontend's **public** URL with `https://`; browsers send
+   that origin, not the private `*.railway.internal` one).
+4. Check the boot logs for `DATABASE STATUS SYNC`, `REDIS STATUS CONNECTED` and
+   `SCHEDULER STATUS ... JOBS SCHEDULED`.
