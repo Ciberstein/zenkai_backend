@@ -251,7 +251,17 @@ const syncEpisodes = async (anime, { resume = false } = {}) => {
   }
 
   while (hasNext) {
-    const payload = await jikan.request(`/anime/${anime.malId}/episodes`, { page }, 0);
+    let payload;
+
+    try {
+      payload = await jikan.request(`/anime/${anime.malId}/episodes`, { page }, 0);
+    } catch (err) {
+      // Jikan no conoce el titulo: no tiene lista que traer. Se da por
+      // sincronizado (vacio) en vez de dejarlo pendiente, o se quedaria al
+      // frente de la cola en cada tanda y haria saltar el corte por fallos.
+      if (err.statusCode === 404 && page === 1) break;
+      throw err;
+    }
 
     collected.push(...(jikan.unwrap(payload) ?? []));
     hasNext = Boolean(jikan.paginationOf(payload)?.has_next_page);
@@ -307,7 +317,7 @@ const backfillEpisodes = async ({ maxTitles = 100, onProgress = () => {} } = {})
   const pending = await Anime.Anime.findAll({
     where: { episodesSyncedAt: null, visible: true },
     order: [db.literal('"popularity" ASC NULLS LAST')],
-    limit: maxTitles,
+    ...(Number.isFinite(maxTitles) ? { limit: maxTitles } : {}),
   });
 
   return syncEpisodeList(pending, { onProgress });

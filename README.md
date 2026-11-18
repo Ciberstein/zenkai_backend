@@ -82,6 +82,7 @@ npm run sync:catalog -- 50       # only 50 pages (1,250 titles)
 npm run sync:catalog -- 50 mal   # force a source
 npm run sync:episodes            # episode lists for the 100 most popular titles
 npm run sync:episodes -- 500     # ... or 500 titles
+npm run sync:episodes -- all     # every title that is still pending
 ```
 
 On a fresh deployment you do not need to run anything by hand: if the backfill has
@@ -115,7 +116,7 @@ All times are UTC.
 | `catalog:airing-episodes` | every 6 hours | New episodes of airing series, 80 per batch, oldest-checked first |
 | `catalog:full-sync` | Sundays, 03:00 | Full catalog sweep (under a minute with the official API) |
 | `catalog:backfill` | every hour | Continues an unfinished sweep; no-op when complete |
-| `catalog:episodes` | every hour (:30) | Episode lists for 40 popular titles that do not have them yet; no-op when none are left |
+| `catalog:episodes` | every hour (:30) | Episode lists (number, title, air date, filler/recap) for up to 2,000 titles per run that do not have them yet, most popular first; no-op when none are left. Jikan's quota (~50 requests/min) is the real limit, so the whole library takes a day or two |
 
 Each run is recorded in `anime.anime_sync_state` (row `job:<name>`: status, start,
 end, result) and can be viewed and triggered from **Admin → Jobs**

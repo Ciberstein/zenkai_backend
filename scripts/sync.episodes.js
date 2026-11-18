@@ -12,7 +12,8 @@ const syslog = require("../utils/syslog.util");
 //
 //   npm run sync:episodes           -> 100 titulos
 //   npm run sync:episodes -- 500    -> 500 titulos
-const maxTitles = Number(process.argv[2]) || 100;
+//   npm run sync:episodes -- all    -> todos los pendientes
+const maxTitles = process.argv[2] === 'all' ? Infinity : (Number(process.argv[2]) || 100);
 
 const run = async () => {
   syslog.banner();

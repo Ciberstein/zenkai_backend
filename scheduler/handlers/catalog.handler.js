@@ -55,9 +55,12 @@ const resumePending = async () => {
   return job.status !== 'done';
 };
 
-// Listas de episodios de titulos que aun no las tienen, 40 por tanda.
+// Listas de episodios de titulos que aun no las tienen, de lo mas popular a lo
+// menos. 2.000 por tanda: el techo real es la cuota de Jikan (~50 peticiones por
+// minuto), asi que la tanda dura cerca de una hora y el catalogo entero se pone
+// al dia en un dia o dos en vez de en semanas.
 const episodes = async () => {
-  const result = await catalog.backfillEpisodes({ maxTitles: 40 });
+  const result = await catalog.backfillEpisodes({ maxTitles: 2000 });
   return {
     processed: result.synced,
     message: `${result.synced} títulos · ${result.episodes} episodios`,

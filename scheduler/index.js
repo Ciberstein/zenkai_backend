@@ -54,12 +54,12 @@ const JOBS = [
   {
     name: 'catalog:episodes',
     label: 'Listas de episodios',
-    description: 'Trae la lista de episodios de los títulos populares que todavía no la tienen. Solo actúa cuando hay algo pendiente.',
+    description: 'Trae la lista de episodios (número, título, fecha) de todos los títulos que todavía no la tienen, de más a menos populares. Solo actúa cuando hay algo pendiente.',
     schedule: 'Cada hora, minuto 30',
     expression: '30 * * * *',
     handler: catalog.episodes,
     when: catalog.episodesPending,
-    ttl: 3600,
+    ttl: 7200,
   },
 ];
 
