@@ -2,6 +2,7 @@ const Anime = require("../../models/anime.models");
 const { db } = require("../../database/config");
 const jikan = require("./jikan.service");
 const mal = require("./mal.service");
+const kitsu = require("./kitsu.service");
 const AppError = require("../../utils/appError");
 const syslog = require("../../utils/syslog.util");
 const { episodesFromJikan, fromMal, genresFromMal } = require("../../utils/anime.util");
@@ -233,55 +234,92 @@ const backfill = async ({ onProgress = () => {}, maxPages = Infinity, source } =
   }
 };
 
-// Trae la lista de episodios de un titulo. Jikan la pagina de 100 en 100, asi
-// que una serie larga cuesta varias peticiones.
-//
-// Con `resume` arranca en la ultima pagina que ya se tiene en vez de en la
-// primera: una serie larga en emision solo gana capitulos al final, y releer
-// las 10 paginas de One Piece cada vez gastaria la cuota de Jikan para nada.
-const syncEpisodes = async (anime, { resume = false } = {}) => {
+// Pagina a pagina de Jikan (100 por pagina), desde `page`. Devuelve las filas
+// en el formato de Jikan. Con ttl 0 los errores llegan crudos de axios.
+const fetchJikanEpisodes = async (anime, page) => {
   const collected = [];
-
-  let page = 1;
   let hasNext = true;
 
-  if (resume) {
-    const stored = await Anime.Episode.count({ where: { animeId: anime.id } });
-    page = Math.floor(stored / EPISODES_PER_PAGE) + 1;
-  }
-
   while (hasNext) {
-    let payload;
-
-    try {
-      payload = await jikan.request(`/anime/${anime.malId}/episodes`, { page }, 0);
-    } catch (err) {
-      // Jikan no conoce el titulo: no tiene lista que traer. Se da por
-      // sincronizado (vacio) en vez de dejarlo pendiente, o se quedaria al
-      // frente de la cola en cada tanda y haria saltar el corte por fallos.
-      // Con ttl 0 el error llega crudo de axios (err.response.status).
-      const status = err.response?.status ?? err.statusCode;
-      if (status === 404 && page === 1) break;
-      throw err;
-    }
+    const payload = await jikan.request(`/anime/${anime.malId}/episodes`, { page }, 0);
 
     collected.push(...(jikan.unwrap(payload) ?? []));
     hasNext = Boolean(jikan.paginationOf(payload)?.has_next_page);
     page += 1;
   }
 
-  if (collected.length) {
-    await Anime.Episode.bulkCreate(
-      episodesFromJikan(anime.id, collected),
-      { updateOnDuplicate: ["title", "filler", "recap", "aired"] }
-    );
+  return collected;
+};
+
+// Si Jikan no responde (caido, sin red, 429 o 5xx) se pasa a Kitsu durante un
+// rato en vez de esperar el timeout en cada titulo. Un error de otro tipo (404,
+// o un fallo nuestro) no cuenta como caida.
+const JIKAN_DOWN_MS = 10 * 60 * 1000;
+let jikanDownUntil = 0;
+
+const statusOf = (err) => err.response?.status ?? err.statusCode;
+
+const isOutage = (err) => {
+  const status = statusOf(err);
+  return (err.isAxiosError && !err.response) || status === 429 || status >= 500;
+};
+
+const episodesFromKitsu = (animeId, list = []) =>
+  list.map((episode) => ({
+    animeId,
+    number: episode.number,
+    title: episode.title,
+    filler: false,
+    recap: false,
+    aired: episode.aired,
+  }));
+
+// Trae la lista de episodios de un titulo: de Jikan y, si no responde, de Kitsu.
+//
+// Con `resume` arranca donde ya se tiene la lista en vez de en el principio:
+// una serie larga en emision solo gana capitulos al final, y releer las 10
+// paginas de One Piece cada vez gastaria cuota para nada.
+const syncEpisodes = async (anime, { resume = false } = {}) => {
+  const stored = resume ? await Anime.Episode.count({ where: { animeId: anime.id } }) : 0;
+
+  let rows = null;
+  let fromKitsu = false;
+
+  if (Date.now() >= jikanDownUntil) {
+    try {
+      rows = episodesFromJikan(anime.id, await fetchJikanEpisodes(anime, Math.floor(stored / EPISODES_PER_PAGE) + 1));
+    } catch (err) {
+      if (statusOf(err) === 404) {
+        // Jikan no conoce el titulo: no tiene lista que traer. Se da por
+        // sincronizado (vacio) en vez de dejarlo pendiente, o se quedaria al
+        // frente de la cola en cada tanda y haria saltar el corte por fallos.
+        rows = [];
+      } else if (isOutage(err)) {
+        jikanDownUntil = Date.now() + JIKAN_DOWN_MS;
+        syslog.warn('EPISODES', `Jikan no responde (${err.code ?? statusOf(err)}): se usa Kitsu durante 10 min`);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  if (!rows) {
+    rows = episodesFromKitsu(anime.id, await kitsu.episodes(anime.malId, { offset: stored }));
+    fromKitsu = true;
+  }
+
+  if (rows.length) {
+    await Anime.Episode.bulkCreate(rows, {
+      // Kitsu no sabe de relleno ni recap: no se pisan los que ya dio Jikan.
+      updateOnDuplicate: fromKitsu ? ["title", "aired"] : ["title", "filler", "recap", "aired"],
+    });
   }
 
   // Se marca aunque venga vacio (peliculas, OVAs de un solo episodio): si no,
   // el trabajo volveria a pedirlo eternamente.
   await anime.update({ episodesSyncedAt: new Date() });
 
-  return collected.length;
+  return rows.length;
 };
 
 // Bucle comun de las sincronizaciones de episodios: uno por uno, tolerante a

@@ -97,7 +97,7 @@ opt out. Without `MAL_CLIENT_ID` the job fails and is retried on the next boot.
 | --- | --- | --- |
 | Catalog, details, metrics, seasons | Official MAL API | Authoritative and fast (500 entries per request) |
 | Recommendations and related titles | Official MAL API | Included in the detail response |
-| **Episode lists** | **Jikan** | `/anime/{id}/episodes` is not available on the official API |
+| **Episode lists** | **Jikan**, with **Kitsu** as fallback | `/anime/{id}/episodes` is not available on the official API. If Jikan is down (network error, 429 or 5xx) the sync switches to Kitsu for 10 minutes; Kitsu gives number, title and air date but no filler/recap flags, so it never overwrites those |
 | Characters | Jikan | The official API ignores the `characters` field |
 | Video links | none | No API provides them; they are added through the admin panel |
 
