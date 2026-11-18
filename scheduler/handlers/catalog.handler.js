@@ -1,5 +1,6 @@
 const Anime = require("../../models/anime.models");
 const catalog = require("../../services/modules/catalog.service");
+const syslog = require("../../utils/syslog.util");
 
 // Cada handler devuelve `{ processed, message }` y deja que el error suba: el
 // ejecutor (scheduler/index.js) es quien lo registra en base y en consola.
@@ -11,10 +12,25 @@ const refresh = async () => {
   return { processed, message: `${processed} títulos (en emisión, próximos y populares)` };
 };
 
+// Cada fallo se deja en el log del servidor: sin esto una tanda donde Jikan no
+// responde terminaba "bien" con 0 titulos y no habia pista de por que.
+const logProgress = ({ title, error }) => {
+  if (error) syslog.warn('EPISODES', `${title} omitido (${error})`);
+};
+
+// Si la tanda aborto, o fallo todo lo que intento, es un error de verdad: el
+// panel de Jobs lo muestra en rojo con el motivo en vez de un "0 titulos".
+const assertWorked = (result) => {
+  if (result.aborted || (result.pending > 0 && result.synced === 0 && result.failed > 0)) {
+    throw new Error(`Jikan no respondió (${result.failed} fallos, último: ${result.lastError})`);
+  }
+};
+
 // Capitulos nuevos de lo que se esta emitiendo. Hasta 80 series por tanda,
 // empezando por las que mas tiempo llevan sin revisarse.
 const airingEpisodes = async () => {
-  const result = await catalog.refreshAiringEpisodes({ maxTitles: 80 });
+  const result = await catalog.refreshAiringEpisodes({ maxTitles: 80, onProgress: logProgress });
+  assertWorked(result);
   return {
     processed: result.synced,
     message: `${result.synced} series · ${result.episodes} episodios revisados`,
@@ -60,7 +76,8 @@ const resumePending = async () => {
 // minuto), asi que la tanda dura cerca de una hora y el catalogo entero se pone
 // al dia en un dia o dos en vez de en semanas.
 const episodes = async () => {
-  const result = await catalog.backfillEpisodes({ maxTitles: 2000 });
+  const result = await catalog.backfillEpisodes({ maxTitles: 2000, onProgress: logProgress });
+  assertWorked(result);
   return {
     processed: result.synced,
     message: `${result.synced} títulos · ${result.episodes} episodios`,

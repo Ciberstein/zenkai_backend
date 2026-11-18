@@ -259,7 +259,9 @@ const syncEpisodes = async (anime, { resume = false } = {}) => {
       // Jikan no conoce el titulo: no tiene lista que traer. Se da por
       // sincronizado (vacio) en vez de dejarlo pendiente, o se quedaria al
       // frente de la cola en cada tanda y haria saltar el corte por fallos.
-      if (err.statusCode === 404 && page === 1) break;
+      // Con ttl 0 el error llega crudo de axios (err.response.status).
+      const status = err.response?.status ?? err.statusCode;
+      if (status === 404 && page === 1) break;
       throw err;
     }
 
@@ -288,6 +290,9 @@ const syncEpisodeList = async (list, { resume = false, onProgress = () => {} } =
   let synced = 0;
   let episodes = 0;
   let consecutive = 0;
+  let failed = 0;
+  let aborted = false;
+  let lastError = null;
 
   for (const anime of list) {
     try {
@@ -298,16 +303,19 @@ const syncEpisodeList = async (list, { resume = false, onProgress = () => {} } =
       onProgress({ title: anime.title, count, synced, total: list.length });
     } catch (err) {
       consecutive += 1;
+      failed += 1;
+      lastError = err.message;
       onProgress({ title: anime.title, error: err.message, synced, total: list.length });
 
       if (consecutive >= MAX_CONSECUTIVE_FAILURES) {
+        aborted = true;
         onProgress({ aborted: true });
         break;
       }
     }
   }
 
-  return { synced, episodes, pending: list.length };
+  return { synced, episodes, pending: list.length, failed, aborted, lastError };
 };
 
 // Recorre el catalogo trayendo episodios, empezando por lo mas popular: es lo
