@@ -35,6 +35,7 @@ background (see [Catalog sync](#catalog-sync)).
 | `MAL_CLIENT_ID` | yes for sync | Client ID of a MyAnimeList app ([myanimelist.net/apiconfig](https://myanimelist.net/apiconfig), free) |
 | `JIKAN_BASE_URL` / `JIKAN_CACHE_TTL` | no | Jikan endpoint and cache TTL in seconds |
 | `REDIS_URL` | recommended | Redis connection URL (default `redis://localhost:6379`) |
+| `TRUST_PROXY` | no | Number of trusted proxies in front of the app (default `1`, which fits Railway; use `2` when Cloudflare is also in front). Needed so the rate limiter sees the real client IP |
 | `SYNC_ON_BOOT` | no | Set to `false` to disable the initial catalog sync on startup |
 
 ## Project structure

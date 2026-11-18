@@ -24,6 +24,13 @@ const admin = require("./routes/admin");
 if (process.env.NODE_ENV === "development")
   app.use(morgan("dev"));
 
+// Detras de Railway (y de Cloudflare si el dominio pasa por el) la IP real llega
+// en X-Forwarded-For. Sin esto `req.ip` es la del proxy, el limitador cuenta a
+// todos los usuarios como uno solo y express-rate-limit lanza
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR. TRUST_PROXY es el numero de proxies de
+// confianza delante de la app: 1 con Railway, 2 con Cloudflare por delante.
+app.set("trust proxy", Number(process.env.TRUST_PROXY ?? 1));
+
 app.use("/ping", (_, r) => r.send("pong"));
 app.use(cors(cors_conf));
 app.use(helmet());
