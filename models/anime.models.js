@@ -372,6 +372,24 @@ const Source = db.define(
   { tableName: "anime_sources", schema: "anime" }
 );
 
+// Pista de subtitulos de un episodio: un archivo de texto (WebVTT) por idioma
+// que el reproductor dibuja encima del video. Es independiente de las fuentes:
+// la misma pista sirve con cualquier calidad o servidor del episodio. Las pistas
+// de audio no se guardan aqui, viajan dentro del manifiesto HLS.
+const Subtitle = db.define(
+  "anime_subtitles",
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true, allowNull: false, field: "id" },
+    episodeId: { type: DataTypes.INTEGER, allowNull: false, field: "episodeId" },
+    language: { type: DataTypes.STRING(12), allowNull: false, field: "language" },
+    label: { type: DataTypes.STRING, allowNull: false, field: "label" },
+    url: { type: DataTypes.TEXT, allowNull: false, field: "url" },
+    default: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: "default" },
+    active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true, field: "active" },
+  },
+  { tableName: "anime_subtitles", schema: "anime" }
+);
+
 // Estado de los trabajos de sincronizacion. El backfill del catalogo entero
 // son ~1.160 paginas y Jikan se cae a media faena, asi que la pagina en curso
 // se persiste aqui: el proceso se reanuda donde lo dejo en vez de empezar
@@ -445,4 +463,4 @@ const SyncState = db.define(
   { tableName: "anime_sync_state", schema: "anime" }
 );
 
-module.exports = { Anime, Genre, AnimeGenre, Episode, Source, SyncState };
+module.exports = { Anime, Genre, AnimeGenre, Episode, Source, Subtitle, SyncState };

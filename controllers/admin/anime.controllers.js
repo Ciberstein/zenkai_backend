@@ -105,7 +105,10 @@ exports.update = catchAsync(async (req, res) => {
 exports.episodes = catchAsync(async (req, res) => {
   const episodes = await Anime.Episode.findAll({
     where: { animeId: req.anime.id },
-    include: [{ model: Anime.Source, as: "sources" }],
+    include: [
+      { model: Anime.Source, as: "sources" },
+      { model: Anime.Subtitle, as: "subtitles" },
+    ],
     order: [["number", "ASC"]],
   });
 
@@ -147,6 +150,36 @@ exports.source = catchAsync(async (req, res) => {
   });
 
   return res.status(201).send(source);
+});
+
+exports.subtitle = catchAsync(async (req, res) => {
+  const { language, label, url } = req.body;
+
+  // Una sola pista por defecto por episodio: si esta lo es, la anterior deja de serlo.
+  if (req.body.default) {
+    await Anime.Subtitle.update({ default: false }, { where: { episodeId: req.episode.id } });
+  }
+
+  const subtitle = await Anime.Subtitle.create({
+    episodeId: req.episode.id,
+    language,
+    label,
+    url,
+    default: Boolean(req.body.default),
+  });
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.SUBTITLE_CREATE,
+    meta: { episodeId: req.episode.id, language },
+  });
+
+  return res.status(201).send(subtitle);
+});
+
+exports.removeSubtitle = catchAsync(async (req, res) => {
+  await Anime.Subtitle.destroy({ where: { id: req.params.id } });
+
+  return res.status(200).send({ message: "Subtitle deleted" });
 });
 
 exports.removeSource = catchAsync(async (req, res) => {

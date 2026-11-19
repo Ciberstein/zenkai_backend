@@ -173,6 +173,12 @@ exports.episode = catchAsync(async (req, res) => {
       where: { active: true },
       required: false,
       attributes: ["id", "server", "url", "type", "quality", "language"],
+    }, {
+      model: Anime.Subtitle,
+      as: "subtitles",
+      where: { active: true },
+      required: false,
+      attributes: ["id", "language", "label", "url", "default"],
     }],
   });
 

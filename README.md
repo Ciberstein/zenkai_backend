@@ -73,6 +73,34 @@ the caller is logged in the response includes their `history`
 (`progress`, `duration`, `completed`) so the player can resume and mark episodes as
 watched. Guests get the plain episode.
 
+## Sources, audio and subtitles
+
+Each episode has **sources** (`anime.anime_sources`) and **subtitle tracks**
+(`anime.anime_subtitles`). Both are added from the admin panel or the admin API:
+
+| Endpoint (under `/api/v1/admin/anime`) | Purpose |
+| --- | --- |
+| `POST /episodes/:id/sources` | `{ server, url, type: hls\|mp4\|embed, quality, language }` |
+| `DELETE /sources/:id` | Remove a source |
+| `POST /episodes/:id/subtitles` | `{ language, label, url, default }` — a WebVTT (`.vtt`) file |
+| `DELETE /subtitles/:id` | Remove a subtitle track |
+
+The model follows how large platforms work: **one video, many tracks**.
+
+- **Audio languages and qualities** travel inside an **HLS manifest** (`type: hls`):
+  one `master.m3u8` lists the video renditions and one `EXT-X-MEDIA:TYPE=AUDIO`
+  entry per language. The player lets the user switch audio and quality without
+  loading another video, so a dub is an extra audio track, not another source.
+- **Subtitles** are separate WebVTT files, one per language, independent from the
+  sources: the same track works with any quality or server of the episode.
+  Subtitle renditions declared in the HLS manifest also show up in the player menu.
+- `mp4` and `embed` sources still work. `mp4` supports subtitles; `embed` is an
+  iframe, so there is no progress tracking or track selection.
+
+Files are hosted wherever you upload them; the API only stores URLs. The host must
+send CORS headers (`Access-Control-Allow-Origin`) for the manifest, its segments and
+the `.vtt` files, otherwise the browser will not load them.
+
 ## Catalog sync
 
 The public catalog is served from Postgres. The upstream APIs only feed the mirror.

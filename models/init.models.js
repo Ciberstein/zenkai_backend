@@ -100,6 +100,16 @@ const init = () => {
     as: 'episode',
   });
 
+  Anime.Episode.hasMany(Anime.Subtitle, {
+    onDelete: 'CASCADE',
+    foreignKey: 'episodeId',
+    as: 'subtitles',
+  });
+  Anime.Subtitle.belongsTo(Anime.Episode, {
+    foreignKey: 'episodeId',
+    as: 'episode',
+  });
+
   /* END ANIME RELATIONSHIPS */
 
   /* LIBRARY RELATIONSHIPS */

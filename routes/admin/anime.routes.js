@@ -46,6 +46,16 @@ router.post("/episodes/:id/sources",
   controllers.anime.source,
 );
 
+router.post("/episodes/:id/subtitles",
+  middlewares.anime.episode,
+  middlewares.anime.subtitle,
+  controllers.anime.subtitle,
+);
+
+router.delete("/subtitles/:id",
+  controllers.anime.removeSubtitle,
+);
+
 router.delete("/sources/:id",
   controllers.anime.removeSource,
 );

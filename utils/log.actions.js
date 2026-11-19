@@ -12,6 +12,7 @@ const LOG_ACTIONS = {
   EPISODE_CREATE: "episode:create",
   EPISODE_UPDATE: "episode:update",
   SOURCE_CREATE: "source:create",
+  SUBTITLE_CREATE: "subtitle:create",
   CONFIG_UPDATE: "config:update",
   JOB_RUN: "job:run",
 };
