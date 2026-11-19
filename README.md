@@ -101,6 +101,45 @@ Files are hosted wherever you upload them; the API only stores URLs. The host mu
 send CORS headers (`Access-Control-Allow-Origin`) for the manifest, its segments and
 the `.vtt` files, otherwise the browser will not load them.
 
+### Publishing an episode (`npm run publish:episode`)
+
+Converts a video to HLS with ffmpeg (one rendition, one audio track per language),
+converts subtitles to WebVTT, uploads everything to Cloudflare R2 and registers the
+source and subtitles in the database. Running it again on the same episode replaces
+what was there instead of duplicating it.
+
+```bash
+npm run publish:episode -- --anime 52991 --episode 1 --video ./ep01.mkv \
+    --audio-lang ja --audio es=./ep01.es.m4a \
+    --sub es=./ep01.es.srt --sub en=./ep01.en.ass
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--anime` / `--episode` | MyAnimeList id and episode number (the episode must already exist: sync its list first) |
+| `--video` | Video file; its first audio track is the main one |
+| `--audio-lang` | Language of that main audio (default `ja`) |
+| `--audio L=FILE` | Extra audio track, e.g. a dub (repeatable) |
+| `--sub L=FILE` | Subtitles in `.srt`, `.ass` or `.vtt` (repeatable) |
+| `--default-sub` | Language shown by default (the first one if omitted) |
+| `--server` / `--language` | Name shown in the server picker (default `Zenkai`) and `sub`/`dub` label |
+| `--reencode` | Re-encode the video even if it is already browser-compatible |
+| `--dry-run` | Convert and print the plan without uploading or touching the database |
+| `--keep` | Keep the temporary files |
+
+Requirements:
+- **ffmpeg** in the `PATH` (Windows: `winget install Gyan.FFmpeg`), or its path in `FFMPEG_PATH`.
+- In `.env`: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` and
+  `R2_PUBLIC_URL` (the bucket's public URL, no trailing slash). `R2_ENDPOINT` points the
+  upload at another S3-compatible service instead.
+- The bucket needs public read access and a CORS rule that allows `GET` and `HEAD` from
+  the frontend's origin.
+
+H.264 8-bit video is copied without re-encoding; anything else is re-encoded to H.264,
+which takes much longer. Files land under `anime/<malId>/<episode>/`. To publish to
+production, run it with the production database credentials (for example
+`railway run npm run publish:episode -- ...` using the database's public URL).
+
 ## Catalog sync
 
 The public catalog is served from Postgres. The upstream APIs only feed the mirror.
