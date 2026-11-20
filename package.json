@@ -15,6 +15,7 @@
   "author": "Cyberstein",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1173.0",
     "@aws-sdk/s3-request-presigner": "^3.1173.0",
     "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",
@@ -34,8 +35,5 @@
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.7",
     "ua-parser-js": "^2.0.9"
-  },
-  "devDependencies": {
-    "@aws-sdk/client-s3": "^3.1173.0"
   }
 }
