@@ -5,7 +5,9 @@ const AppError = require("../../utils/appError");
 const LOG_ACTIONS = require("../../utils/log.actions");
 const { paginate, meta } = require("../../utils/pagination.util");
 const { fromMal, genresFromMal, episodesFromJikan } = require("../../utils/anime.util");
+const crypto = require("crypto");
 const { Op } = require("sequelize");
+const storage = require("../../services/modules/storage.service");
 
 const { jikan, mal } = services;
 
@@ -108,6 +110,14 @@ exports.episodes = catchAsync(async (req, res) => {
     include: [
       { model: Anime.Source, as: "sources" },
       { model: Anime.Subtitle, as: "subtitles" },
+      {
+        // Lo que esta en curso, y lo terminado hace poco para poder mostrar el resultado.
+        model: Anime.Upload,
+        as: "uploads",
+        required: false,
+        attributes: ["id", "status", "message", "createdAt", "updatedAt", "finishedAt"],
+        where: { [Op.or]: [{ status: { [Op.ne]: "done" } }, { finishedAt: { [Op.gt]: new Date(Date.now() - 10 * 60 * 1000) } }] },
+      },
     ],
     order: [["number", "ASC"]],
   });
@@ -180,6 +190,129 @@ exports.removeSubtitle = catchAsync(async (req, res) => {
   await Anime.Subtitle.destroy({ where: { id: req.params.id } });
 
   return res.status(200).send({ message: "Subtitle deleted" });
+});
+
+// ── Subida de episodios desde el admin ───────────────────────────────────────
+//
+// 1. createUpload   crea el trabajo y devuelve una URL firmada por archivo: el
+//                   navegador sube directo al bucket privado, sin pasar por aqui.
+// 2. completeUpload comprueba que llegaron enteros y lo deja en cola para el worker.
+// 3. el worker (worker/index.js) convierte, publica y borra los originales.
+
+const ACTIVE = ["uploading", "queued", "processing"];
+const ABANDONED_MS = 30 * 60 * 1000;
+
+const keysOf = (upload) => upload.files.map((file) => file.key);
+
+const discard = async (upload) => {
+  const { uploadBucket } = storage.config();
+  await storage.remove(uploadBucket, keysOf(upload)).catch(() => {});
+  await upload.destroy();
+};
+
+const extOf = (name) => (name.toLowerCase().match(/\.[a-z0-9]+$/) ?? [""])[0];
+
+exports.createUpload = catchAsync(async (req, res) => {
+  const cfg = storage.config();
+  const missing = storage.missing(cfg, { upload: true, publish: false });
+
+  if (missing.length) {
+    throw new AppError(`Uploads are not configured: missing ${missing.join(", ")}`, 503);
+  }
+
+  const { filename, size, extras = [], options = {} } = req.body;
+
+  // Una subida a medias que lleva media hora sin tocarse se da por abandonada
+  // (cerraron la pestana): no debe bloquear el episodio para siempre.
+  const current = await Anime.Upload.findOne({ where: { episodeId: req.episode.id, status: { [Op.in]: ACTIVE } } });
+
+  if (current) {
+    if (current.status === "uploading" && Date.now() - current.updatedAt.getTime() > ABANDONED_MS) await discard(current);
+    else throw new AppError("This episode already has an upload in progress", 409);
+  }
+
+  const upload = await Anime.Upload.create({
+    episodeId: req.episode.id,
+    accountId: req.sessionAccount?.id ?? null,
+    options: {
+      server: options.server || "Zenkai",
+      language: options.language || "sub",
+      audioLang: options.audioLang || "ja",
+    },
+  });
+
+  // Ruta con un token aleatorio: con un solo bucket publico, un id correlativo
+  // dejaria los originales a un paso de ser adivinados.
+  const token = crypto.randomUUID();
+
+  const files = [
+    { kind: "video", lang: null, name: filename, size, key: `incoming/${token}/video${extOf(filename)}` },
+    ...extras.map((extra, index) => ({
+      kind: extra.kind,
+      lang: extra.lang,
+      name: extra.filename,
+      size: extra.size,
+      key: `incoming/${token}/${extra.kind}-${index}-${extra.lang}${extOf(extra.filename)}`,
+    })),
+  ];
+
+  await upload.update({ files });
+
+  const urls = await Promise.all(files.map((file) => storage.presignPut(cfg.uploadBucket, file.key)));
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.UPLOAD_CREATE,
+    meta: { episodeId: req.episode.id, uploadId: upload.id, files: files.length },
+  });
+
+  return res.status(201).send({
+    id: upload.id,
+    files: files.map((file, index) => ({ kind: file.kind, lang: file.lang, name: file.name, url: urls[index] })),
+  });
+});
+
+exports.completeUpload = catchAsync(async (req, res) => {
+  const { upload } = req;
+
+  if (upload.status !== "uploading") {
+    throw new AppError(`Upload is already ${upload.status}`, 409);
+  }
+
+  const { uploadBucket } = storage.config();
+
+  // Que lo subido sea de verdad lo que se anuncio: un corte de red a medias
+  // dejaria un video truncado que el worker intentaria convertir.
+  for (const file of upload.files) {
+    const actual = await storage.sizeOf(uploadBucket, file.key);
+
+    if (actual !== file.size) {
+      throw new AppError(`${file.name} did not finish uploading (${actual ?? 0} of ${file.size} bytes)`, 409);
+    }
+  }
+
+  await upload.update({ status: "queued", message: "En cola" });
+
+  return res.status(200).send(upload);
+});
+
+exports.retryUpload = catchAsync(async (req, res) => {
+  if (req.upload.status !== "error") {
+    throw new AppError("Only failed uploads can be retried", 409);
+  }
+
+  await req.upload.update({ status: "queued", message: "En cola", startedAt: null, finishedAt: null });
+
+  return res.status(200).send(req.upload);
+});
+
+exports.removeUpload = catchAsync(async (req, res) => {
+  if (req.upload.status === "processing") {
+    throw new AppError("The video is being converted; wait for it to finish", 409);
+  }
+
+  await discard(req.upload);
+
+  return res.status(200).send({ message: "Upload deleted" });
 });
 
 exports.removeSource = catchAsync(async (req, res) => {

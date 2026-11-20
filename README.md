@@ -101,6 +101,62 @@ Files are hosted wherever you upload them; the API only stores URLs. The host mu
 send CORS headers (`Access-Control-Allow-Origin`) for the manifest, its segments and
 the `.vtt` files, otherwise the browser will not load them.
 
+### Uploading from the admin panel
+
+In **Admin → Catalog → anime**, each episode has an **↑ Upload video** button (you can
+also drop the files straight onto the episode row). Drop the video and, optionally, its
+subtitles and extra audio tracks (`ep01.es.srt`, `ep01.es.m4a`: the language is taken
+from the file name, or typed in). There are no folders to create: the destination
+`anime/<malId>/<episode>/` is derived from the episode.
+
+```
+browser ──PUT (signed URL)──▶ incoming/<token>/ ──▶ worker ──▶ anime/<malId>/<episode>/ (HLS)
+   │                                 ▲                │            (all in the same bucket)
+   └── API: create / complete ───────┴── queue ───────┘   (table anime.anime_uploads)
+```
+
+1. `POST /api/v1/admin/anime/episodes/:id/uploads` validates the request, creates the job
+   and returns one **signed URL per file**. The browser uploads straight to the bucket
+   (under `incoming/<random token>/`), so large videos never go through the API (one file
+   up to 5 GB, no resume).
+2. `POST /uploads/:id/complete` checks that every file arrived with its announced size
+   and queues the job.
+3. The **worker** (`npm run worker`) takes queued jobs, downloads the originals, runs the
+   same conversion as `publish:episode`, publishes, registers the source and subtitles,
+   and deletes the originals. The episode row shows *En cola → Convirtiendo → Publicado*
+   (or the error, with **Reintentar** and **Descartar**). `POST /uploads/:id/retry` and
+   `DELETE /uploads/:id` back those buttons.
+
+Setup:
+
+1. **Hide `incoming/` on the public domain.** The bucket is public through its custom
+   domain, so the original uploads would be downloadable from `/incoming/...` while they
+   wait for conversion. Their path carries a random token (not guessable), but also block
+   it: in Cloudflare, **Security → WAF → Custom rules**, create a rule that blocks
+   ```
+   (http.host eq "cdn.your-domain.com" and starts_with(http.request.uri.path, "/incoming/"))
+   ```
+   Signed uploads and the worker use the S3 endpoint, not the custom domain, so the rule
+   does not affect them. (To keep the originals in a separate private bucket instead, set
+   `R2_UPLOAD_BUCKET`; then this rule is not needed.)
+2. **CORS on the bucket**: add `PUT` so the browser can upload from the admin. A single rule
+   covers the player too:
+   ```json
+   [{"AllowedOrigins":["https://your-frontend.example.com"],"AllowedMethods":["GET","HEAD","PUT"],"AllowedHeaders":["*"],"MaxAgeSeconds":3600}]
+   ```
+3. **API service on Railway:** add `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+   `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`. (Without them the upload endpoint answers
+   `503 Uploads are not configured`.)
+4. **Worker service on Railway:** create a second service from this same repository and set
+   `RAILWAY_DOCKERFILE_PATH=Dockerfile.worker` (the image is the API plus ffmpeg). Give it
+   the database variables (`DB_*`) and all the `R2_*` ones (`R2_ACCOUNT_ID`,
+   `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`) and nothing
+   else; it exposes no port.
+
+Notes: run **one** worker instance. A job interrupted by a restart goes back to the queue
+by itself. The worker needs disk for the original plus the converted copy (roughly two to
+three times the video size). Abandoned uploads and old errors are cleaned up hourly.
+
 ### Publishing an episode (`npm run publish:episode`)
 
 Converts a video to HLS with ffmpeg (one rendition, one audio track per language),
@@ -126,6 +182,42 @@ npm run publish:episode -- --anime 52991 --episode 1 --video ./ep01.mkv \
 | `--reencode` | Re-encode the video even if it is already browser-compatible |
 | `--dry-run` | Convert and print the plan without uploading or touching the database |
 | `--keep` | Keep the temporary files |
+
+The audio tracks and text subtitle tracks already inside the video (an `.mkv`, for
+example) are used automatically, mapped by their language tag. Loose `--audio` and
+`--sub` files are added on top, and a loose subtitle wins over an embedded one in the
+same language. Image-based subtitles (PGS, DVD) cannot be converted and are skipped.
+Spanish is the default subtitle when present, otherwise the first one.
+
+### Publishing a whole folder (`npm run publish:folder`)
+
+Drop the videos in a folder and let the script do the rest: convert, upload to the
+episode's folder in the bucket and register it.
+
+```bash
+npm run publish:folder -- ./episodes            # process once
+npm run publish:folder -- ./episodes --watch    # keep watching, publish what you drop in
+```
+
+```
+episodes/
+  52991/                ← MyAnimeList id of the anime
+    01.mkv              ← episode number (01, 1, 001…)
+    01.es.srt           ← loose subtitles: NUMBER.LANG.srt|ass|vtt
+    01.es.m4a           ← loose audio (a dub): NUMBER.LANG.m4a|aac|mka|mp3…
+    02.mp4
+```
+
+- What was already published is remembered in `episodes/.zenkai-published.json` and is
+  not repeated unless the video or its loose files change (or you pass `--force`).
+- A file modified in the last 15 seconds is skipped, because it is probably still being
+  copied; `--watch` picks it up on the next check (`--interval`, 30 s by default).
+- An episode that fails (for example, it does not exist in the database yet) does not
+  stop the rest, and `--watch` retries it after 10 minutes or when the file changes.
+- Publishing an episode again replaces its folder in the bucket, so segments from the
+  previous version do not pile up. Each episode has a single HLS package.
+- The other options (`--server`, `--language`, `--audio-lang`, `--reencode`,
+  `--dry-run`) work as in `publish:episode`.
 
 Requirements:
 - **ffmpeg** in the `PATH` (Windows: `winget install Gyan.FFmpeg`), or its path in `FFMPEG_PATH`.

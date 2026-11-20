@@ -110,6 +110,16 @@ const init = () => {
     as: 'episode',
   });
 
+  Anime.Episode.hasMany(Anime.Upload, {
+    onDelete: 'CASCADE',
+    foreignKey: 'episodeId',
+    as: 'uploads',
+  });
+  Anime.Upload.belongsTo(Anime.Episode, {
+    foreignKey: 'episodeId',
+    as: 'episode',
+  });
+
   /* END ANIME RELATIONSHIPS */
 
   /* LIBRARY RELATIONSHIPS */

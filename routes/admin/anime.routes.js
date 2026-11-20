@@ -56,6 +56,27 @@ router.delete("/subtitles/:id",
   controllers.anime.removeSubtitle,
 );
 
+router.post("/episodes/:id/uploads",
+  middlewares.anime.episode,
+  middlewares.anime.uploadRequest,
+  controllers.anime.createUpload,
+);
+
+router.post("/uploads/:id/complete",
+  middlewares.anime.upload,
+  controllers.anime.completeUpload,
+);
+
+router.post("/uploads/:id/retry",
+  middlewares.anime.upload,
+  controllers.anime.retryUpload,
+);
+
+router.delete("/uploads/:id",
+  middlewares.anime.upload,
+  controllers.anime.removeUpload,
+);
+
 router.delete("/sources/:id",
   controllers.anime.removeSource,
 );

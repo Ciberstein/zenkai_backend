@@ -8,11 +8,14 @@
     "start": "nodemon server.js",
     "sync:catalog": "node scripts/sync.catalog.js",
     "sync:episodes": "node scripts/sync.episodes.js",
-    "publish:episode": "node scripts/publish.episode.js"
+    "publish:episode": "node scripts/publish.episode.js",
+    "publish:folder": "node scripts/publish.folder.js",
+    "worker": "node worker/index.js"
   },
   "author": "Cyberstein",
   "license": "MIT",
   "dependencies": {
+    "@aws-sdk/s3-request-presigner": "^3.1173.0",
     "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",
     "cookie-parser": "^1.4.7",

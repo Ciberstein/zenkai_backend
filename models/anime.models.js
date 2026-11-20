@@ -390,6 +390,31 @@ const Subtitle = db.define(
   { tableName: "anime_subtitles", schema: "anime" }
 );
 
+// Video subido desde el admin que espera (o esta pasando por) la conversion a HLS.
+// El navegador sube los archivos originales al bucket privado de subidas con URLs
+// firmadas; el worker los toma de ahi, los convierte, los publica y los borra.
+//   uploading  el navegador aun esta subiendo
+//   queued     subido, esperando al worker
+//   processing el worker lo esta convirtiendo
+//   done | error
+const Upload = db.define(
+  "anime_uploads",
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true, allowNull: false, field: "id" },
+    episodeId: { type: DataTypes.INTEGER, allowNull: false, field: "episodeId" },
+    accountId: { type: DataTypes.INTEGER, allowNull: true, field: "accountId" },
+    status: { type: DataTypes.STRING(16), allowNull: false, defaultValue: "uploading", field: "status" },
+    // [{ kind: video|audio|sub, lang, name, key, size }]
+    files: { type: DataTypes.JSONB, allowNull: false, defaultValue: [], field: "files" },
+    // { server, language, audioLang }
+    options: { type: DataTypes.JSONB, allowNull: false, defaultValue: {}, field: "options" },
+    message: { type: DataTypes.TEXT, allowNull: true, field: "message" },
+    startedAt: { type: DataTypes.DATE, allowNull: true, field: "startedAt" },
+    finishedAt: { type: DataTypes.DATE, allowNull: true, field: "finishedAt" },
+  },
+  { tableName: "anime_uploads", schema: "anime" }
+);
+
 // Estado de los trabajos de sincronizacion. El backfill del catalogo entero
 // son ~1.160 paginas y Jikan se cae a media faena, asi que la pagina en curso
 // se persiste aqui: el proceso se reanuda donde lo dejo en vez de empezar
@@ -463,4 +488,4 @@ const SyncState = db.define(
   { tableName: "anime_sync_state", schema: "anime" }
 );
 
-module.exports = { Anime, Genre, AnimeGenre, Episode, Source, Subtitle, SyncState };
+module.exports = { Anime, Genre, AnimeGenre, Episode, Source, Subtitle, Upload, SyncState };
