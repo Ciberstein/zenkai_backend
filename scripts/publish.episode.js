@@ -87,7 +87,8 @@ const R2 = {
   key: process.env.R2_ACCESS_KEY_ID,
   secret: process.env.R2_SECRET_ACCESS_KEY,
   bucket: process.env.R2_BUCKET,
-  base: (process.env.R2_PUBLIC_URL ?? "").replace(/\/$/, ""),
+  // Sin barra final y con protocolo: pegar "cdn.ejemplo.com" a secas dejaria URLs relativas en la base.
+  base: (process.env.R2_PUBLIC_URL ?? "").trim().replace(/\/+$/, "").replace(/^(?!https?:\/\/)(?=.)/i, "https://"),
   endpoint: process.env.R2_ENDPOINT,
 };
 
