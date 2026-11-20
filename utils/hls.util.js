@@ -87,6 +87,20 @@ const withoutAudio = (master, dir) => {
   return { master: lines.join('\n'), removed };
 };
 
+// Manifiesto con `dir` como audio predeterminado (y los demas no).
+const withDefaultAudio = (master, dir) => {
+  const tracks = audioTracks(master);
+  if (!tracks.some((track) => track.dir === dir)) throw new Error('Ese audio no existe en el episodio');
+
+  const lines = master.split(EOL);
+
+  for (const track of tracks) {
+    lines[track.index] = lines[track.index].replace(/DEFAULT=(?:YES|NO)/, `DEFAULT=${track.dir === dir ? 'YES' : 'NO'}`);
+  }
+
+  return lines.join('\n');
+};
+
 // Ruta de la lista de reproduccion del video (la linea que sigue a #EXT-X-STREAM-INF).
 const videoUri = (master) => {
   const lines = master.split(EOL);
@@ -99,4 +113,4 @@ const videoUri = (master) => {
 const duration = (playlist) =>
   [...playlist.matchAll(/#EXTINF:([\d.]+)/g)].reduce((sum, match) => sum + Number(match[1]), 0);
 
-module.exports = { audioTracks, freeDir, withAudio, withoutAudio, videoUri, duration };
+module.exports = { audioTracks, freeDir, withAudio, withoutAudio, withDefaultAudio, videoUri, duration };

@@ -81,6 +81,11 @@ router.get("/episodes/:id/audio",
   controllers.anime.listAudio,
 );
 
+router.put("/episodes/:id/audio/:dir/default",
+  middlewares.anime.episode,
+  controllers.anime.defaultAudio,
+);
+
 router.delete("/episodes/:id/audio/:dir",
   middlewares.anime.episode,
   controllers.anime.removeAudio,

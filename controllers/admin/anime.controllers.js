@@ -449,6 +449,29 @@ exports.removeAudio = catchAsync(async (req, res) => {
   return res.status(200).send({ message: "Audio removed", tracks: hls.audioTracks(patched.master).length });
 });
 
+exports.defaultAudio = catchAsync(async (req, res) => {
+  const { dir } = req.params;
+
+  if (!/^[A-Za-z0-9_-]+$/.test(dir)) throw new AppError("Invalid audio folder", 406);
+
+  const { cfg, prefix, master } = await masterOf(req.episode);
+
+  let patched;
+
+  try {
+    patched = hls.withDefaultAudio(master, dir);
+  } catch (err) {
+    throw new AppError(err.message, 409);
+  }
+
+  await storage.put(cfg.bucket, `${prefix}master.m3u8`, patched, {
+    contentType: "application/vnd.apple.mpegurl",
+    cacheControl: "public, max-age=300",
+  });
+
+  return res.status(200).send({ message: "Default audio updated" });
+});
+
 exports.completeUpload = catchAsync(async (req, res) => {
   const { upload } = req;
 
