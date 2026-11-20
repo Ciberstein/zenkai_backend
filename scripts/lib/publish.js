@@ -6,6 +6,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const storage = require("../../services/modules/storage.service");
+const hls = require("../../utils/hls.util");
 
 // Nucleo de la publicacion de episodios: convierte un video a HLS con ffmpeg (una
 // calidad, una pista de audio por idioma), pasa los subtitulos a WebVTT, lo sube
@@ -314,4 +315,124 @@ const publishEpisode = async (ctx, job) => {
   }
 };
 
-module.exports = { createContext, closeContext, publishEpisode, languageName, iso };
+// ─── Añadir un audio a un episodio ya publicado ──────────────────────────────
+
+const minutes = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, '0')}`;
+
+// Convierte SOLO el audio nuevo a HLS, lo sube a su propia carpeta del episodio y lo añade al
+// manifiesto: no hace falta volver a subir el video. Si ya habia una pista de ese idioma, la
+// reemplaza (en una carpeta nueva: los segmentos viejos estan cacheados "para siempre").
+//
+// job: { malId, number, file, lang, offsetMs, log }
+//   offsetMs > 0 retrasa el audio, < 0 lo adelanta: para corregir un doblaje desfasado.
+const addAudio = async (ctx, job) => {
+  const log = job.log ?? ((message) => console.log(`› ${message}`));
+  const { malId, number, file, lang } = job;
+  const offsetMs = Number(job.offsetMs) || 0;
+
+  const anime = await ctx.Anime.Anime.findOne({ where: { malId } });
+  if (!anime) throw new Error(`No hay ningun anime con malId ${malId} en la base`);
+
+  const episode = await ctx.Anime.Episode.findOne({ where: { animeId: anime.id, number } });
+  if (!episode) throw new Error(`${anime.title} no tiene episodio ${number}`);
+
+  const prefix = `anime/${malId}/${number}/`;
+  const masterKey = `${prefix}master.m3u8`;
+
+  // Solo se puede sumar a un paquete que publico Zenkai: es el unico que tiene un manifiesto con
+  // pistas separadas que se pueda ampliar.
+  const published = await ctx.Anime.Source.findOne({ where: { episodeId: episode.id, type: 'hls' } });
+  if (!published || !published.url.endsWith(masterKey)) {
+    throw new Error(`${anime.title} · episodio ${number} no tiene un video publicado por Zenkai: sube primero el video con sus audios`);
+  }
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `zenkai-audio-${malId}-${number}-`));
+  let base = null;
+  let committed = false;
+
+  try {
+    // 1. El manifiesto actual del episodio
+    const masterFile = path.join(dir, 'master.m3u8');
+
+    try {
+      await storage.download(ctx.r2.bucket, masterKey, masterFile);
+    } catch {
+      throw new Error('No se encontro el manifiesto del episodio en el bucket');
+    }
+
+    const master = fs.readFileSync(masterFile, 'utf8');
+
+    // 2. Convertir el audio nuevo
+    const info = await probe(file);
+    if (!info.audio.length) throw new Error('El archivo no tiene ninguna pista de audio');
+
+    const out = path.join(dir, 'out');
+    fs.mkdirSync(out);
+
+    const shift = offsetMs > 0
+      ? ['-af', `adelay=${offsetMs}:all=1`]
+      : offsetMs < 0 ? ['-af', `atrim=start=${-offsetMs / 1000},asetpts=PTS-STARTPTS`] : [];
+
+    log(`Convirtiendo el audio (${lang}${offsetMs ? `, desfase ${offsetMs} ms` : ''})`);
+
+    await ffmpeg([
+      '-y', '-hide_banner', '-loglevel', 'warning', '-stats',
+      '-i', file,
+      '-map', `0:${info.audio[0].index}`, '-vn', '-map_metadata', '-1',
+      ...shift,
+      '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
+      '-f', 'hls', '-hls_time', '6', '-hls_playlist_type', 'vod',
+      '-hls_flags', 'independent_segments', '-hls_segment_type', 'mpegts',
+      '-hls_segment_filename', posix(path.join(out, 'seg_%04d.ts')),
+      posix(path.join(out, 'index.m3u8')),
+    ]);
+
+    // 3. El aviso mas util: un doblaje de otro corte dura distinto y saldria desincronizado.
+    const warnings = [];
+
+    try {
+      const videoList = hls.videoUri(master);
+      const videoFile = path.join(dir, 'video.m3u8');
+
+      if (videoList) {
+        await storage.download(ctx.r2.bucket, `${prefix}${videoList}`, videoFile);
+
+        const video = hls.duration(fs.readFileSync(videoFile, 'utf8'));
+        const audio = hls.duration(fs.readFileSync(path.join(out, 'index.m3u8'), 'utf8'));
+
+        if (Math.abs(video - audio) > 2) {
+          warnings.push(`el audio dura ${minutes(audio)} y el video ${minutes(video)}: puede estar desincronizado`);
+        }
+      }
+    } catch { /* sin la duracion del video no se puede comparar: no es motivo para fallar */ }
+
+    // 4. Subir los segmentos a su carpeta, y SOLO entonces tocar el manifiesto
+    const target = hls.freeDir(master, lang);
+    base = `${prefix}${target}/`;
+
+    await upload(ctx, out, base, log);
+
+    const { master: patched, replaced } = hls.withAudio(master, { lang, dir: target });
+
+    await storage.put(ctx.r2.bucket, masterKey, patched, {
+      contentType: 'application/vnd.apple.mpegurl',
+      cacheControl: 'public, max-age=300',
+    });
+    committed = true;
+
+    // 5. La pista que se sustituyo ya no la usa nadie
+    if (replaced?.dir && replaced.dir !== target && /^[A-Za-z0-9_-]+$/.test(replaced.dir)) {
+      await storage.removePrefix(ctx.r2.bucket, `${prefix}${replaced.dir}/`);
+    }
+
+    return { dir: target, replaced: Boolean(replaced), tracks: hls.audioTracks(patched).length, warnings };
+  } catch (err) {
+    // Si fallo antes de publicar el manifiesto, los segmentos subidos quedarian huerfanos.
+    if (base && !committed) await storage.removePrefix(ctx.r2.bucket, base).catch(() => {});
+    throw err;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+module.exports = { createContext, closeContext, publishEpisode, addAudio, languageName, iso };

@@ -62,6 +62,12 @@ const client = () => {
 const presignPut = (bucket, key, expiresIn = 6 * 3600) =>
   getSignedUrl(client(), new PutObjectCommand({ Bucket: bucket, Key: key }), { expiresIn });
 
+// Sube un objeto pequeno (un subtitulo, por ejemplo) desde la propia API.
+const put = (bucket, key, body, { contentType, cacheControl } = {}) =>
+  client().send(new PutObjectCommand({
+    Bucket: bucket, Key: key, Body: body, ContentType: contentType, CacheControl: cacheControl,
+  }));
+
 // Tamano del objeto, o null si no existe.
 const sizeOf = async (bucket, key) => {
   try {
@@ -100,4 +106,4 @@ const removePrefix = async (bucket, prefix) => {
   } while (token);
 };
 
-module.exports = { config, missing, client, presignPut, sizeOf, download, remove, removePrefix };
+module.exports = { config, missing, client, presignPut, put, sizeOf, download, remove, removePrefix };

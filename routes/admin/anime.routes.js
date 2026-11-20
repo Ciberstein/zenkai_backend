@@ -52,6 +52,14 @@ router.post("/episodes/:id/subtitles",
   controllers.anime.subtitle,
 );
 
+// El cuerpo es el archivo tal cual (hasta 5 MB: un .ass con karaoke puede pasar de 1 MB).
+router.post("/episodes/:id/subtitles/upload",
+  middlewares.anime.episode,
+  express.raw({ type: "application/octet-stream", limit: "5mb" }),
+  middlewares.anime.subtitleFile,
+  controllers.anime.uploadSubtitle,
+);
+
 router.delete("/subtitles/:id",
   controllers.anime.removeSubtitle,
 );
@@ -60,6 +68,12 @@ router.post("/episodes/:id/uploads",
   middlewares.anime.episode,
   middlewares.anime.uploadRequest,
   controllers.anime.createUpload,
+);
+
+router.post("/episodes/:id/audio-uploads",
+  middlewares.anime.episode,
+  middlewares.anime.audioRequest,
+  controllers.anime.createAudioUpload,
 );
 
 router.post("/uploads/:id/complete",

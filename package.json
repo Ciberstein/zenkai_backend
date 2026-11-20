@@ -10,6 +10,7 @@
     "sync:episodes": "node scripts/sync.episodes.js",
     "publish:episode": "node scripts/publish.episode.js",
     "publish:folder": "node scripts/publish.folder.js",
+    "add:audio": "node scripts/add.audio.js",
     "worker": "node worker/index.js"
   },
   "author": "Cyberstein",

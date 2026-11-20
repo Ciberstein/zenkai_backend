@@ -8,6 +8,7 @@ const { fromMal, genresFromMal, episodesFromJikan } = require("../../utils/anime
 const crypto = require("crypto");
 const { Op } = require("sequelize");
 const storage = require("../../services/modules/storage.service");
+const { toVtt } = require("../../utils/subtitle.util");
 
 const { jikan, mal } = services;
 
@@ -186,6 +187,59 @@ exports.subtitle = catchAsync(async (req, res) => {
   return res.status(201).send(subtitle);
 });
 
+// Sube el archivo de subtitulos desde el admin: se convierte a WebVTT aqui (sin ffmpeg), se
+// guarda en la carpeta del episodio del bucket y se registra. Subir otro del mismo idioma
+// reemplaza el anterior.
+exports.uploadSubtitle = catchAsync(async (req, res) => {
+  const cfg = storage.config();
+  const absent = storage.missing(cfg);
+
+  if (absent.length) {
+    throw new AppError(`Storage is not configured: missing ${absent.join(", ")}`, 503);
+  }
+
+  const { language, label, filename } = req.query;
+
+  let converted;
+
+  try {
+    converted = toVtt(req.body, extOf(filename));
+  } catch (err) {
+    throw new AppError(err.message, 406);
+  }
+
+  const anime = await Anime.Anime.findByPk(req.episode.animeId, { attributes: ["malId"] });
+  const key = `anime/${anime.malId}/${req.episode.number}/subs/${language}.vtt`;
+
+  await storage.put(cfg.bucket, key, converted.vtt, {
+    contentType: "text/vtt; charset=utf-8",
+    cacheControl: "public, max-age=300",
+  });
+
+  const isDefault = req.query.default === "true" || req.query.default === "1";
+
+  if (isDefault) {
+    await Anime.Subtitle.update({ default: false }, { where: { episodeId: req.episode.id } });
+  }
+
+  await Anime.Subtitle.destroy({ where: { episodeId: req.episode.id, language } });
+
+  const subtitle = await Anime.Subtitle.create({
+    episodeId: req.episode.id,
+    language,
+    label,
+    url: `${cfg.base}/${key}`,
+    default: isDefault,
+  });
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.SUBTITLE_CREATE,
+    meta: { episodeId: req.episode.id, language, cues: converted.cues },
+  });
+
+  return res.status(201).send({ ...subtitle.toJSON(), cues: converted.cues });
+});
+
 exports.removeSubtitle = catchAsync(async (req, res) => {
   await Anime.Subtitle.destroy({ where: { id: req.params.id } });
 
@@ -212,6 +266,16 @@ const discard = async (upload) => {
 
 const extOf = (name) => (name.toLowerCase().match(/\.[a-z0-9]+$/) ?? [""])[0];
 
+// Un episodio solo admite una subida a la vez. Una a medias que lleva media hora sin tocarse se da
+// por abandonada (cerraron la pestana): no debe bloquearlo para siempre.
+const claim = async (episodeId) => {
+  const current = await Anime.Upload.findOne({ where: { episodeId, status: { [Op.in]: ACTIVE } } });
+  if (!current) return;
+
+  if (current.status === "uploading" && Date.now() - current.updatedAt.getTime() > ABANDONED_MS) await discard(current);
+  else throw new AppError("This episode already has an upload in progress", 409);
+};
+
 exports.createUpload = catchAsync(async (req, res) => {
   const cfg = storage.config();
   const missing = storage.missing(cfg, { upload: true, publish: false });
@@ -222,14 +286,7 @@ exports.createUpload = catchAsync(async (req, res) => {
 
   const { filename, size, extras = [], options = {} } = req.body;
 
-  // Una subida a medias que lleva media hora sin tocarse se da por abandonada
-  // (cerraron la pestana): no debe bloquear el episodio para siempre.
-  const current = await Anime.Upload.findOne({ where: { episodeId: req.episode.id, status: { [Op.in]: ACTIVE } } });
-
-  if (current) {
-    if (current.status === "uploading" && Date.now() - current.updatedAt.getTime() > ABANDONED_MS) await discard(current);
-    else throw new AppError("This episode already has an upload in progress", 409);
-  }
+  await claim(req.episode.id);
 
   const upload = await Anime.Upload.create({
     episodeId: req.episode.id,
@@ -269,6 +326,46 @@ exports.createUpload = catchAsync(async (req, res) => {
     id: upload.id,
     files: files.map((file, index) => ({ kind: file.kind, lang: file.lang, name: file.name, url: urls[index] })),
   });
+});
+
+// Audio extra para un episodio YA publicado: el navegador sube solo el audio y el worker lo
+// convierte y lo suma al manifiesto del episodio (sin tocar el video).
+exports.createAudioUpload = catchAsync(async (req, res) => {
+  const cfg = storage.config();
+  const absent = storage.missing(cfg, { upload: true, publish: false });
+
+  if (absent.length) {
+    throw new AppError(`Uploads are not configured: missing ${absent.join(", ")}`, 503);
+  }
+
+  const { filename, size, language, offset = 0 } = req.body;
+
+  const published = await Anime.Source.findOne({ where: { episodeId: req.episode.id, type: "hls" } });
+
+  if (!published) {
+    throw new AppError("This episode has no video published by Zenkai: upload the video (with its audio tracks) first", 409);
+  }
+
+  await claim(req.episode.id);
+
+  const token = crypto.randomUUID();
+  const key = `incoming/${token}/audio-${language}${extOf(filename)}`;
+
+  const upload = await Anime.Upload.create({
+    episodeId: req.episode.id,
+    accountId: req.sessionAccount?.id ?? null,
+    options: { kind: "audio", offset },
+    files: [{ kind: "audio", lang: language, name: filename, size, key }],
+  });
+
+  const url = await storage.presignPut(cfg.uploadBucket, key);
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.UPLOAD_CREATE,
+    meta: { episodeId: req.episode.id, uploadId: upload.id, kind: "audio", language },
+  });
+
+  return res.status(201).send({ id: upload.id, files: [{ kind: "audio", lang: language, name: filename, url }] });
 });
 
 exports.completeUpload = catchAsync(async (req, res) => {

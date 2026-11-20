@@ -2,6 +2,7 @@ const Anime = require("../../models/anime.models");
 const AppError = require("../../utils/appError");
 const catchAsync = require("../../utils/catchAsync");
 const { isInteger } = require("../../utils/validators");
+const { FORMATS } = require("../../utils/subtitle.util");
 
 exports.anime = catchAsync(async (req, _, next) => {
   const { id } = req.params;
@@ -108,6 +109,56 @@ exports.uploadRequest = catchAsync(async (req, _, next) => {
 
   if (options.audioLang && !LANG.test(options.audioLang)) {
     return next(new AppError("Audio language must be a code like ja or es", 406));
+  }
+
+  next();
+});
+
+// Subtitulos como archivo (.ass, .ssa, .srt o .vtt): el cuerpo son los bytes del archivo y
+// los datos viajan en la query. Se envia asi y no como JSON para no perder la codificacion
+// (muchos .srt/.ass antiguos no son UTF-8 y leerlos como texto los estropearia).
+exports.subtitleFile = catchAsync(async (req, _, next) => {
+  const { language, label, filename } = req.query;
+
+  if (!Buffer.isBuffer(req.body) || !req.body.length) {
+    return next(new AppError("Send the subtitle file as the request body (application/octet-stream)", 406));
+  }
+
+  if (!LANG.test(language ?? "")) {
+    return next(new AppError("Language must be a code like es, en or es-419", 406));
+  }
+
+  if (!label || String(label).length > 60) {
+    return next(new AppError("Label is required (60 characters at most)", 406));
+  }
+
+  if (!FORMATS.includes(extOf(filename ?? ""))) {
+    return next(new AppError(`Subtitles must be one of: ${FORMATS.join(", ")}`, 406));
+  }
+
+  next();
+});
+
+// Un audio extra (doblaje) para un episodio ya publicado. Puede venir en un archivo de audio o
+// dentro de un video/mkv: se toma su primera pista de audio.
+exports.audioRequest = catchAsync(async (req, _, next) => {
+  const { filename, size, language, offset = 0 } = req.body;
+  const accepted = [...AUDIO_EXT, ...VIDEO_EXT];
+
+  if (!filename || !accepted.includes(extOf(filename))) {
+    return next(new AppError(`File must be one of: ${accepted.join(", ")}`, 406));
+  }
+
+  if (!Number.isInteger(size) || size <= 0 || size > MAX_BYTES) {
+    return next(new AppError("File size must be between 1 byte and 5 GB", 406));
+  }
+
+  if (!LANG.test(language ?? "")) {
+    return next(new AppError("Language must be a code like es, en or es-419", 406));
+  }
+
+  if (!Number.isInteger(offset) || Math.abs(offset) > 60000) {
+    return next(new AppError("Offset must be a whole number of milliseconds between -60000 and 60000", 406));
   }
 
   next();

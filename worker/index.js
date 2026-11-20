@@ -8,7 +8,7 @@ const { db } = require("../database/config");
 const Anime = require("../models/anime.models");
 const storage = require("../services/modules/storage.service");
 const syslog = require("../utils/syslog.util");
-const { createContext, publishEpisode } = require("../scripts/lib/publish");
+const { createContext, publishEpisode, addAudio } = require("../scripts/lib/publish");
 
 // Worker de conversion: un proceso aparte (en Railway, un segundo servicio con
 // ffmpeg) que toma los videos subidos desde el admin, los convierte a HLS, los
@@ -89,6 +89,30 @@ const handle = async (ctx, upload) => {
       const target = path.join(dir, path.basename(file.key));
       await storage.download(uploadBucket, file.key, target);
       local.set(file.key, target);
+    }
+
+    // Un audio extra para un episodio ya publicado: solo se convierte el audio y se suma al manifiesto.
+    if (upload.options.kind === "audio") {
+      const file = upload.files[0];
+
+      const added = await addAudio(ctx, {
+        malId: episode.anime.malId,
+        number: episode.number,
+        file: local.get(file.key),
+        lang: file.lang,
+        offsetMs: upload.options.offset,
+        log: say,
+      });
+
+      await storage.remove(uploadBucket, upload.files.map((f) => f.key));
+      await upload.update({
+        status: "done",
+        message: ["Audio añadido", ...added.warnings].join(" · "),
+        finishedAt: new Date(),
+      });
+
+      log(`✓ episodio ${upload.episodeId}: audio ${file.lang} añadido (${added.tracks} pistas)`);
+      return;
     }
 
     const pick = (kind) => upload.files.filter((f) => f.kind === kind).map((f) => ({ lang: f.lang, file: local.get(f.key) }));

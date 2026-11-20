@@ -82,7 +82,9 @@ Each episode has **sources** (`anime.anime_sources`) and **subtitle tracks**
 | --- | --- |
 | `POST /episodes/:id/sources` | `{ server, url, type: hls\|mp4\|embed, quality, language }` |
 | `DELETE /sources/:id` | Remove a source |
-| `POST /episodes/:id/subtitles` | `{ language, label, url, default }` — a WebVTT (`.vtt`) file |
+| `POST /episodes/:id/subtitles` | `{ language, label, url, default }` — a WebVTT (`.vtt`) file already hosted somewhere |
+| `POST /episodes/:id/subtitles/upload?language=&label=&filename=&default=` | The body is the subtitle file itself (`application/octet-stream`, up to 5 MB): `.ass`, `.ssa`, `.srt` or `.vtt` |
+| `POST /episodes/:id/audio-uploads` | `{ filename, size, language, offset }` — queue an extra audio (another dub) for an episode already published as HLS; returns a signed URL to upload it, then call `POST /uploads/:id/complete` |
 | `DELETE /subtitles/:id` | Remove a subtitle track |
 
 The model follows how large platforms work: **one video, many tracks**.
@@ -94,6 +96,18 @@ The model follows how large platforms work: **one video, many tracks**.
 - **Subtitles** are separate WebVTT files, one per language, independent from the
   sources: the same track works with any quality or server of the episode.
   Subtitle renditions declared in the HLS manifest also show up in the player menu.
+  - **Uploading a subtitle file** (`.ass`, `.ssa`, `.srt` or `.vtt`) from the admin goes through
+    `subtitles/upload`: the API converts it to WebVTT with plain JavaScript (no ffmpeg needed,
+    see `utils/subtitle.util.js`), stores it at `anime/<malId>/<episode>/subs/<lang>.vtt` in the
+    public bucket and registers it. Uploading another one for the same language replaces it.
+  - The file is read as raw bytes and its encoding is detected (UTF-8, UTF-8/UTF-16 with BOM,
+    or Windows-1252), so old `.srt`/`.ass` files keep their accents.
+  - From an `.ass` the text and the timing are kept; the **styling is not** (colours, position,
+    karaoke) and vector drawings and `Comment:` lines are dropped. Overlapping duplicate lines
+    (typical of karaoke) are merged into one.
+  - The API service needs the same storage variables as the worker for this (`R2_ACCOUNT_ID`,
+    `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`); without them the
+    endpoint answers `503`. Re-uploading the *video* replaces the episode's folder, subtitles included.
 - `mp4` and `embed` sources still work. `mp4` supports subtitles; `embed` is an
   iframe, so there is no progress tracking or track selection.
 
@@ -188,6 +202,26 @@ example) are used automatically, mapped by their language tag. Loose `--audio` a
 `--sub` files are added on top, and a loose subtitle wins over an embedded one in the
 same language. Image-based subtitles (PGS, DVD) cannot be converted and are skipped.
 Spanish is the default subtitle when present, otherwise the first one.
+
+### Adding another audio (dub) to a published episode
+
+No need to upload the video again: only the new audio is converted and added to the
+episode's `master.m3u8`. From the admin, use **⋯ → Añadir audio (doblaje)** on the episode,
+or from the terminal:
+
+```bash
+npm run add:audio -- --anime 52991 --episode 1 --audio es-419=./latin-dub.m4a
+npm run add:audio -- --anime 52991 --episode 1 --audio es=./dub.m4a --offset -300
+```
+
+- The file can be an audio file or a video/mkv (its first audio track is used).
+- Use a region code to tell dubs apart: `es`, `es-419`, `es-ES`…
+- If the episode already has an audio in that language it is **replaced**. The new one goes
+  to a new folder (segments are cached as immutable) and the old one is deleted.
+- `--offset` (ms) fixes a dub that is out of sync: positive delays it, negative advances it.
+  A warning is shown when the audio length differs from the video by more than 2 s.
+- The episode must have been published as HLS by this project (`publish:episode`, `publish:folder`
+  or the admin upload).
 
 ### Publishing a whole folder (`npm run publish:folder`)
 
