@@ -68,6 +68,25 @@ const withAudio = (master, { lang, dir }) => {
   return { master: kept.join('\n'), replaced };
 };
 
+// Manifiesto sin la pista de audio que vive en la carpeta `dir`. Si era la predeterminada,
+// pasa a serlo la primera que queda. Devuelve { master, removed }; no deja el episodio mudo.
+const withoutAudio = (master, dir) => {
+  const tracks = audioTracks(master);
+  const removed = tracks.find((track) => track.dir === dir) ?? null;
+
+  if (!removed) throw new Error('Ese audio no existe en el episodio');
+  if (tracks.length === 1) throw new Error('No se puede quitar el unico audio del episodio');
+
+  const lines = master.split(EOL).filter((_, index) => index !== removed.index);
+
+  if (removed.isDefault) {
+    const [first] = audioTracks(lines.join('\n'));
+    lines[first.index] = lines[first.index].replace(/DEFAULT=NO/, 'DEFAULT=YES');
+  }
+
+  return { master: lines.join('\n'), removed };
+};
+
 // Ruta de la lista de reproduccion del video (la linea que sigue a #EXT-X-STREAM-INF).
 const videoUri = (master) => {
   const lines = master.split(EOL);
@@ -80,4 +99,4 @@ const videoUri = (master) => {
 const duration = (playlist) =>
   [...playlist.matchAll(/#EXTINF:([\d.]+)/g)].reduce((sum, match) => sum + Number(match[1]), 0);
 
-module.exports = { audioTracks, freeDir, withAudio, videoUri, duration };
+module.exports = { audioTracks, freeDir, withAudio, withoutAudio, videoUri, duration };

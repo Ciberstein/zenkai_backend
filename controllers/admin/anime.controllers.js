@@ -9,6 +9,7 @@ const crypto = require("crypto");
 const { Op } = require("sequelize");
 const storage = require("../../services/modules/storage.service");
 const { toVtt } = require("../../utils/subtitle.util");
+const hls = require("../../utils/hls.util");
 
 const { jikan, mal } = services;
 
@@ -241,7 +242,21 @@ exports.uploadSubtitle = catchAsync(async (req, res) => {
 });
 
 exports.removeSubtitle = catchAsync(async (req, res) => {
+  const subtitle = await Anime.Subtitle.findByPk(req.params.id);
+
   await Anime.Subtitle.destroy({ where: { id: req.params.id } });
+
+  // Si el .vtt esta en nuestro bucket (extraido del video o subido desde el admin), se borra
+  // tambien de alli para no pagar por archivos que ya nadie usa. Una URL externa no se toca,
+  // ni un archivo que otra pista siga usando. Si el borrado falla, la pista ya esta quitada.
+  const cfg = storage.config();
+
+  if (subtitle && cfg.base && subtitle.url.startsWith(`${cfg.base}/anime/`) && subtitle.url.endsWith(".vtt")) {
+    const key = subtitle.url.slice(cfg.base.length + 1);
+    const shared = await Anime.Subtitle.count({ where: { url: subtitle.url } });
+
+    if (!shared) await storage.remove(cfg.bucket, [key]).catch(() => {});
+  }
 
   return res.status(200).send({ message: "Subtitle deleted" });
 });
@@ -366,6 +381,72 @@ exports.createAudioUpload = catchAsync(async (req, res) => {
   });
 
   return res.status(201).send({ id: upload.id, files: [{ kind: "audio", lang: language, name: filename, url }] });
+});
+
+// Audios del episodio publicado, leidos de su manifiesto (master.m3u8) en el bucket.
+const masterOf = async (episode) => {
+  const cfg = storage.config();
+  const absent = storage.missing(cfg);
+
+  if (absent.length) throw new AppError(`Storage is not configured: missing ${absent.join(", ")}`, 503);
+
+  const anime = await Anime.Anime.findByPk(episode.animeId, { attributes: ["malId"] });
+  const prefix = `anime/${anime.malId}/${episode.number}/`;
+  const published = await Anime.Source.findOne({ where: { episodeId: episode.id, type: "hls" } });
+
+  if (!published || !published.url.endsWith(`${prefix}master.m3u8`)) {
+    throw new AppError("This episode has no video published by Zenkai", 409);
+  }
+
+  let master;
+
+  try {
+    master = await storage.read(cfg.bucket, `${prefix}master.m3u8`);
+  } catch {
+    throw new AppError("The episode manifest was not found in the bucket", 404);
+  }
+
+  return { cfg, prefix, master };
+};
+
+exports.listAudio = catchAsync(async (req, res) => {
+  const { master } = await masterOf(req.episode);
+
+  const tracks = hls.audioTracks(master).map(({ dir, lang, name, isDefault }) => ({ dir, lang, name, default: isDefault }));
+
+  return res.status(200).send(tracks);
+});
+
+// Quita un audio del episodio (p. ej. un doblaje de mas): primero se publica el manifiesto sin
+// la pista y despues se borran sus segmentos del bucket.
+exports.removeAudio = catchAsync(async (req, res) => {
+  const { dir } = req.params;
+
+  if (!/^[A-Za-z0-9_-]+$/.test(dir)) throw new AppError("Invalid audio folder", 406);
+
+  const { cfg, prefix, master } = await masterOf(req.episode);
+
+  let patched;
+
+  try {
+    patched = hls.withoutAudio(master, dir);
+  } catch (err) {
+    throw new AppError(err.message, 409);
+  }
+
+  await storage.put(cfg.bucket, `${prefix}master.m3u8`, patched.master, {
+    contentType: "application/vnd.apple.mpegurl",
+    cacheControl: "public, max-age=300",
+  });
+
+  await storage.removePrefix(cfg.bucket, `${prefix}${dir}/`).catch(() => {});
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.AUDIO_REMOVE,
+    meta: { episodeId: req.episode.id, dir, lang: patched.removed.lang },
+  });
+
+  return res.status(200).send({ message: "Audio removed", tracks: hls.audioTracks(patched.master).length });
 });
 
 exports.completeUpload = catchAsync(async (req, res) => {

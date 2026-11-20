@@ -76,6 +76,16 @@ router.post("/episodes/:id/audio-uploads",
   controllers.anime.createAudioUpload,
 );
 
+router.get("/episodes/:id/audio",
+  middlewares.anime.episode,
+  controllers.anime.listAudio,
+);
+
+router.delete("/episodes/:id/audio/:dir",
+  middlewares.anime.episode,
+  controllers.anime.removeAudio,
+);
+
 router.post("/uploads/:id/complete",
   middlewares.anime.upload,
   controllers.anime.completeUpload,

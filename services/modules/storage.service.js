@@ -79,6 +79,12 @@ const sizeOf = async (bucket, key) => {
   }
 };
 
+// Lee un objeto pequeno (un manifiesto .m3u8) como texto.
+const read = async (bucket, key) => {
+  const { Body } = await client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  return Body.transformToString();
+};
+
 // Descarga a disco en flujo: un video de gigas no se carga entero en memoria.
 const download = async (bucket, key, file) => {
   const { Body } = await client().send(new GetObjectCommand({ Bucket: bucket, Key: key }));
@@ -106,4 +112,4 @@ const removePrefix = async (bucket, prefix) => {
   } while (token);
 };
 
-module.exports = { config, missing, client, presignPut, put, sizeOf, download, remove, removePrefix };
+module.exports = { config, missing, client, presignPut, put, sizeOf, read, download, remove, removePrefix };
