@@ -5,6 +5,7 @@ const services = {
   redis: require("./modules/redis.service"),
   auth: require("./modules/auth.service"),
   mail: require("./modules/mail.service"),
+  cloudinary: require("./modules/cloudinary.service"),
   verification: require("./modules/verification.service"),
   logger: require("./modules/logger.service"),
 };

@@ -16,6 +16,15 @@ router.get("/:id?",
   controllers.profile.profile,
 );
 
+router.post("/avatar",
+  middlewares.profile.avatar,
+  controllers.profile.avatar,
+);
+
+router.delete("/avatar",
+  controllers.profile.removeAvatar,
+);
+
 router.patch("/",
   middlewares.profile.update,
   controllers.profile.update,

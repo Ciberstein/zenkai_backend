@@ -37,6 +37,7 @@ background (see [Catalog sync](#catalog-sync)).
 | `REDIS_URL` | recommended | Redis connection URL (default `redis://localhost:6379`) |
 | `TRUST_PROXY` | no | Number of trusted proxies in front of the app (default `1`, which fits Railway; use `2` when Cloudflare is also in front). Needed so the rate limiter sees the real client IP |
 | `RESEND_API_KEY` / `MAIL_FROM` | for e-mail verification | [Resend](https://resend.com) API key and sender (`Zenkai <no-reply@yourdomain.com>`, on a domain verified in Resend). **Without both, sign-up works as before, with no e-mail check** |
+| `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | for profile photos | [Cloudinary](https://cloudinary.com) credentials. Photos go to the `zenkai/avatars` folder. Without them, uploading a photo answers `501` |
 | `SYNC_ON_BOOT` | no | Set to `false` to disable the initial catalog sync on startup |
 
 ## Project structure
@@ -102,6 +103,15 @@ Same codes, different `purpose` (`recovery`), so the code from a sign-up e-mail 
    Without Resend configured it answers `501` (not `503`: the frontend logs out on 503).
 2. `POST /auth/recovery/reset { email, code, password }` checks the code, sets the new password, **drops every
    open session** and does not log in: the user goes back to the login screen.
+
+## Profile photos (Cloudinary)
+
+`POST /me/profile/avatar` (multipart, field `avatar`: JPEG, PNG or WebP, up to 5 MB) uploads the photo to Cloudinary under
+the project's root folder `zenkai/avatars`, stores its URL in `profile.avatar` and deletes the previous photo. `DELETE
+/me/profile/avatar` removes it. The file type is checked from its first bytes, not from what the browser declares; the
+image is stored at 512 px at most. Only images in our own Cloudinary account and `zenkai/` folder are ever deleted, so an
+older avatar hosted elsewhere is left alone. `avatar` is no longer accepted in `PATCH /me/profile`: a photo can only come
+from the upload. The frontend crops the image to a square (`react-easy-crop`) before sending it.
 
 ## Sources, audio and subtitles
 
