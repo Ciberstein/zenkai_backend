@@ -96,6 +96,27 @@ const Session = db.define(
   { tableName: "accounts_sessions", schema: "accounts" }
 );
 
+// Codigo de un solo uso enviado por correo (verificar el correo al crear la cuenta; `purpose`
+// deja sitio para otros usos, como recuperar la contrasena). Se guarda su huella, nunca el
+// codigo; un solo codigo vigente por cuenta y uso.
+const Code = db.define(
+  "accounts_codes",
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true, allowNull: false, field: "id" },
+    accountId: { type: DataTypes.INTEGER, allowNull: false, field: "accountId" },
+    purpose: { type: DataTypes.STRING(16), allowNull: false, defaultValue: "verify", field: "purpose" },
+    hash: { type: DataTypes.STRING(64), allowNull: false, field: "hash" },
+    attempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0, field: "attempts" },
+    expiresAt: { type: DataTypes.DATE, allowNull: false, field: "expiresAt" },
+    sentAt: { type: DataTypes.DATE, allowNull: false, field: "sentAt" },
+  },
+  {
+    tableName: "accounts_codes",
+    schema: "accounts",
+    indexes: [{ unique: true, fields: ["accountId", "purpose"] }],
+  }
+);
+
 const Role = db.define(
   "accounts_roles",
   {
@@ -126,4 +147,4 @@ const Role = db.define(
   { tableName: "accounts_roles", schema: "accounts" }
 );
 
-module.exports = { Account, Session, Role };
+module.exports = { Account, Session, Code, Role };

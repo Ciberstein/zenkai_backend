@@ -3,8 +3,9 @@ const Profile = require("../../models/profile.models");
 const AppError = require("../../utils/appError");
 const catchAsync = require("../../utils/catchAsync");
 const { compare } = require("../../utils/hash.util");
+const verification = require("../../services/modules/verification.service");
 
-exports.validate = catchAsync(async (req, _, next) => {
+exports.validate = catchAsync(async (req, res, next) => {
   const { identifier, password } = req.body;
 
   if (!identifier || !password) {
@@ -28,6 +29,21 @@ exports.validate = catchAsync(async (req, _, next) => {
 
   if (account.status === 'banned') {
     return next(new AppError(`This account is suspended`, 403));
+  }
+
+  // Credenciales correctas pero el correo sin verificar: se le manda un codigo nuevo y el
+  // frontend lo lleva a la pantalla del codigo (no se abre sesion).
+  if (account.status === 'pending') {
+    const result = await verification.issue(account);
+
+    return res.status(403).send({
+      status: "error",
+      message: "Verify your email to continue",
+      verify: true,
+      email: account.email,
+      sent: result.sent,
+      wait: result.wait ?? 0,
+    });
   }
 
   req.account = account;

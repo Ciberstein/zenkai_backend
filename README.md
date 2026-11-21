@@ -36,6 +36,7 @@ background (see [Catalog sync](#catalog-sync)).
 | `JIKAN_BASE_URL` / `JIKAN_CACHE_TTL` | no | Jikan endpoint and cache TTL in seconds |
 | `REDIS_URL` | recommended | Redis connection URL (default `redis://localhost:6379`) |
 | `TRUST_PROXY` | no | Number of trusted proxies in front of the app (default `1`, which fits Railway; use `2` when Cloudflare is also in front). Needed so the rate limiter sees the real client IP |
+| `RESEND_API_KEY` / `MAIL_FROM` | for e-mail verification | [Resend](https://resend.com) API key and sender (`Zenkai <no-reply@yourdomain.com>`, on a domain verified in Resend). **Without both, sign-up works as before, with no e-mail check** |
 | `SYNC_ON_BOOT` | no | Set to `false` to disable the initial catalog sync on startup |
 
 ## Project structure
@@ -63,7 +64,7 @@ A request always follows the same flow:
 
 | Prefix | Access | Contents |
 | --- | --- | --- |
-| `/api/v1/auth` | public | register, login, logout, refresh, validate |
+| `/api/v1/auth` | public | register, verify (+ resend), recovery (+ reset), login, logout, refresh, validate |
 | `/api/v1/public` | public (optional session) | catalog, anime pages, episodes, config, languages |
 | `/api/v1/me` | session required | account, profile, watchlist, favorites, watch history |
 | `/api/v1/admin` | authority >= 30000 | accounts, catalog, episodes, sources, jobs, logs |
@@ -72,6 +73,35 @@ A request always follows the same flow:
 the caller is logged in the response includes their `history`
 (`progress`, `duration`, `completed`) so the player can resume and mark episodes as
 watched. Guests get the plain episode.
+
+## E-mail verification
+
+With `RESEND_API_KEY` and `MAIL_FROM` set, creating an account confirms the e-mail with a code:
+
+1. `POST /auth/register` creates the account as `pending` (no session yet) and e-mails a 6-digit code →
+   `{ verify: true, email, sent, wait }`. Registering again with the same pending e-mail updates the
+   account and sends a new code; pending accounts older than 24 h are purged so they free their username.
+2. `POST /auth/verify { email, code }` activates the account, sets `verified` and opens the session.
+3. `POST /auth/verify/resend { email }` sends another code. It answers the same whether or not the
+   account exists, so it cannot be used to find out who is registered.
+4. `POST /auth/login` with correct credentials on a still-pending account sends a fresh code and
+   answers `403 { verify: true, email }`, so the frontend can continue from the code screen.
+
+Codes: random (`crypto`), valid 15 minutes, stored only as an HMAC, one active code per account,
+at most one e-mail per minute and account, 5 attempts per code, compared in constant time. These routes
+also have their own rate limit (20 per 15 min per IP, `AUTH_MAIL_LIMIT`). Accounts created before this
+feature are `active` and unaffected. If Resend is down the account stays pending and the code screen
+offers "resend".
+
+### Password recovery
+
+Same codes, different `purpose` (`recovery`), so the code from a sign-up e-mail never works here:
+
+1. `POST /auth/recovery { email }` e-mails a code to an **active** account (pending ones must verify first,
+   suspended ones are skipped). It always answers `200` with a constant `wait`, whether the account exists or not.
+   Without Resend configured it answers `501` (not `503`: the frontend logs out on 503).
+2. `POST /auth/recovery/reset { email, code, password }` checks the code, sets the new password, **drops every
+   open session** and does not log in: the user goes back to the login screen.
 
 ## Sources, audio and subtitles
 

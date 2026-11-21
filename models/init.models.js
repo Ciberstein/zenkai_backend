@@ -63,6 +63,16 @@ const init = () => {
     as: 'account',
   });
 
+  Accounts.Account.hasMany(Accounts.Code, {
+    onDelete: 'CASCADE',
+    foreignKey: 'accountId',
+    as: 'codes',
+  });
+  Accounts.Code.belongsTo(Accounts.Account, {
+    foreignKey: 'accountId',
+    as: 'account',
+  });
+
   /* END ACCOUNT RELATIONSHIPS */
 
   /* ANIME RELATIONSHIPS */

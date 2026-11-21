@@ -4,6 +4,8 @@ const services = {
   catalog: require("./modules/catalog.service"),
   redis: require("./modules/redis.service"),
   auth: require("./modules/auth.service"),
+  mail: require("./modules/mail.service"),
+  verification: require("./modules/verification.service"),
   logger: require("./modules/logger.service"),
 };
 
