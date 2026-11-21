@@ -179,6 +179,11 @@ exports.episode = catchAsync(async (req, res) => {
       where: { active: true },
       required: false,
       attributes: ["id", "language", "label", "url", "default"],
+    }, {
+      model: Anime.Segment,
+      as: "segments",
+      required: false,
+      attributes: ["type", "start", "end"],
     }],
   });
 

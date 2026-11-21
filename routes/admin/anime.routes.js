@@ -40,6 +40,28 @@ router.patch("/episodes/:id",
   controllers.anime.episode,
 );
 
+router.post("/:id/segments/fetch",
+  middlewares.anime.anime,
+  controllers.anime.fetchAnimeSegments,
+);
+
+router.post("/episodes/:id/segments/fetch",
+  middlewares.anime.episode,
+  controllers.anime.fetchSegments,
+);
+
+router.put("/episodes/:id/segments/:type",
+  middlewares.anime.episode,
+  middlewares.anime.segment,
+  controllers.anime.setSegment,
+);
+
+router.delete("/episodes/:id/segments/:type",
+  middlewares.anime.episode,
+  middlewares.anime.segment,
+  controllers.anime.removeSegment,
+);
+
 router.post("/episodes/:id/sources",
   middlewares.anime.episode,
   middlewares.anime.source,

@@ -116,6 +116,10 @@ Each episode has **sources** (`anime.anime_sources`) and **subtitle tracks**
 | `POST /episodes/:id/subtitles/upload?language=&label=&filename=&default=` | The body is the subtitle file itself (`application/octet-stream`, up to 5 MB): `.ass`, `.ssa`, `.srt` or `.vtt` |
 | `POST /episodes/:id/audio-uploads` | `{ filename, size, language, offset }` — queue an extra audio (another dub) for an episode already published as HLS; returns a signed URL to upload it, then call `POST /uploads/:id/complete` |
 | `DELETE /subtitles/:id` | Remove a subtitle track |
+| `PUT /episodes/:id/segments/:type` | `{ start, end }` in seconds — set an intro / outro / recap by hand (`type` = `intro`, `outro` or `recap`); manual always wins |
+| `DELETE /episodes/:id/segments/:type` | Remove a segment |
+| `POST /episodes/:id/segments/fetch` | Look the episode's segments up in AniSkip → `{ found, saved, kept }` |
+| `POST /:id/segments/fetch` | Same for every episode of the anime, in the background (`202`) |
 
 The model follows how large platforms work: **one video, many tracks**.
 
@@ -232,6 +236,33 @@ example) are used automatically, mapped by their language tag. Loose `--audio` a
 `--sub` files are added on top, and a loose subtitle wins over an embedded one in the
 same language. Image-based subtitles (PGS, DVD) cannot be converted and are skipped.
 Spanish is the default subtitle when present, otherwise the first one.
+
+### Skip intro / credits / recap
+
+Each episode can have **segments** (`anime.anime_segments`: `type`, `start`, `end` in seconds,
+`source`, `confidence`). The player shows a **Skip intro** / **Skip recap** / **Next episode**
+(credits) button while the playback is inside one, draws them on the progress bar and has a
+"skip intros automatically" setting. The public episode endpoint returns them as `segments`.
+
+Where they come from, in priority order (a lower source never overwrites a higher one):
+
+1. `manual` — set by an admin (episode panel → *Marcas*).
+2. `aniskip` — community timestamps from [AniSkip](https://api.aniskip.com), looked up by MyAnimeList id
+   and episode number. It runs automatically when an episode is published, from the admin
+   (*Buscar en AniSkip*, per episode, or *Buscar marcas*, per anime) and with
+   `npm run fetch:segments` for what is already published:
+
+   ```bash
+   npm run fetch:segments                          # every episode that has a video
+   npm run fetch:segments -- --anime 52991         # one anime
+   npm run fetch:segments -- --anime 52991 --episode 3
+   ```
+
+   AniSkip times belong to one specific cut of the video, so the entry whose `episodeLength` is
+   closest to the real duration is used, and none at all if it differs by more than 2 minutes.
+   `confidence` records how close it was. Review (or correct by hand) what looks off.
+3. `detected` — reserved for a future automatic detection that compares the audio of consecutive
+   episodes in the worker.
 
 ### Adding another audio (dub) to a published episode
 

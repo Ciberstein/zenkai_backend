@@ -7,6 +7,7 @@ const { spawn } = require("child_process");
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const storage = require("../../services/modules/storage.service");
 const hls = require("../../utils/hls.util");
+const segments = require("../../services/modules/segments.service");
 
 // Nucleo de la publicacion de episodios: convierte un video a HLS con ffmpeg (una
 // calidad, una pista de audio por idioma), pasa los subtitulos a WebVTT, lo sube
@@ -273,6 +274,21 @@ const register = async (ctx, episode, job, subs, urls) => {
   }
 };
 
+// Marcas de intro/outro del episodio recien publicado, de AniSkip. Se pide con la duracion real
+// del video para quedarse con la version que coincide. Si AniSkip no responde o no tiene datos,
+// no pasa nada: se pueden buscar o poner a mano despues desde el admin.
+const findSegments = async (ctx, episode, malId, out, log) => {
+  try {
+    const master = fs.readFileSync(path.join(out, "master.m3u8"), "utf8");
+    const length = hls.duration(fs.readFileSync(path.join(out, hls.videoUri(master)), "utf8"));
+
+    const result = await segments.fetchFromAniskip(ctx.Anime, { episode, malId, length });
+    log(result.saved ? `Marcas de AniSkip: ${result.saved}` : "Sin marcas en AniSkip para este episodio");
+  } catch (err) {
+    log(`No se pudieron buscar las marcas (AniSkip): ${err.message}`);
+  }
+};
+
 // ─── Publicacion ──────────────────────────────────────────────────────────────
 
 // job: { malId, number, video, audio: [{lang, file}], subs: [{lang, file}],
@@ -308,6 +324,7 @@ const publishEpisode = async (ctx, job) => {
     await clearPrefix(ctx, prefix);
     const files = await upload(ctx, out, prefix, log);
     await register(ctx, episode, job, subs, urls);
+    await findSegments(ctx, episode, malId, out, log);
 
     return { url: urls.master, files, tracks, subs };
   } finally {

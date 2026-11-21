@@ -10,6 +10,7 @@ const { Op } = require("sequelize");
 const storage = require("../../services/modules/storage.service");
 const { toVtt } = require("../../utils/subtitle.util");
 const hls = require("../../utils/hls.util");
+const segments = require("../../services/modules/segments.service");
 
 const { jikan, mal } = services;
 
@@ -112,6 +113,7 @@ exports.episodes = catchAsync(async (req, res) => {
     include: [
       { model: Anime.Source, as: "sources" },
       { model: Anime.Subtitle, as: "subtitles" },
+      { model: Anime.Segment, as: "segments", required: false },
       {
         // Lo que esta en curso, y lo terminado hace poco para poder mostrar el resultado.
         model: Anime.Upload,
@@ -470,6 +472,77 @@ exports.defaultAudio = catchAsync(async (req, res) => {
   });
 
   return res.status(200).send({ message: "Default audio updated" });
+});
+
+// ── Segmentos (intro / outro / recap) ────────────────────────────────────────
+
+// Fija un segmento a mano: manda sobre cualquier fuente automatica.
+exports.setSegment = catchAsync(async (req, res) => {
+  const { type } = req.params;
+  const { start, end } = req.body;
+
+  const data = { start, end, source: "manual", confidence: null };
+  const current = await Anime.Segment.findOne({ where: { episodeId: req.episode.id, type } });
+
+  const segment = current
+    ? await current.update(data)
+    : await Anime.Segment.create({ episodeId: req.episode.id, type, ...data });
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.SEGMENT_UPDATE,
+    meta: { episodeId: req.episode.id, type, start, end },
+  });
+
+  return res.status(200).send(segment);
+});
+
+exports.removeSegment = catchAsync(async (req, res) => {
+  await Anime.Segment.destroy({ where: { episodeId: req.episode.id, type: req.params.type } });
+
+  return res.status(200).send({ message: "Segment removed" });
+});
+
+const FETCH_PAUSE_MS = 250;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const searchOne = async (episode, malId) => {
+  try {
+    return await segments.fetchFromAniskip(Anime, { episode, malId });
+  } catch (err) {
+    throw new AppError(`AniSkip is not available right now: ${err.message}`, 502);
+  }
+};
+
+// Busca en AniSkip las marcas de un episodio.
+exports.fetchSegments = catchAsync(async (req, res) => {
+  const anime = await Anime.Anime.findByPk(req.episode.animeId, { attributes: ["malId"] });
+
+  return res.status(200).send(await searchOne(req.episode, anime.malId));
+});
+
+// Busca en AniSkip las marcas de todos los episodios del anime. Una serie larga son muchas
+// consultas, asi que se hace por detras y el admin va viendo aparecer las marcas.
+const running = new Set();
+
+exports.fetchAnimeSegments = catchAsync(async (req, res) => {
+  if (running.has(req.anime.id)) throw new AppError("Already searching segments for this anime", 409);
+
+  const episodes = await Anime.Episode.findAll({ where: { animeId: req.anime.id }, order: [["number", "ASC"]] });
+
+  running.add(req.anime.id);
+
+  (async () => {
+    try {
+      for (const episode of episodes) {
+        await segments.fetchFromAniskip(Anime, { episode, malId: req.anime.malId }).catch(() => {});
+        await sleep(FETCH_PAUSE_MS);
+      }
+    } finally {
+      running.delete(req.anime.id);
+    }
+  })();
+
+  return res.status(202).send({ message: "Searching", episodes: episodes.length });
 });
 
 exports.completeUpload = catchAsync(async (req, res) => {

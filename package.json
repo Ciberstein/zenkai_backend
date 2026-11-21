@@ -11,6 +11,7 @@
     "publish:episode": "node scripts/publish.episode.js",
     "publish:folder": "node scripts/publish.folder.js",
     "add:audio": "node scripts/add.audio.js",
+    "fetch:segments": "node scripts/fetch.segments.js",
     "worker": "node worker/index.js"
   },
   "author": "Cyberstein",

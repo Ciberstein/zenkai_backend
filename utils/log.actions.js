@@ -14,6 +14,7 @@ const LOG_ACTIONS = {
   SOURCE_CREATE: "source:create",
   SUBTITLE_CREATE: "subtitle:create",
   AUDIO_REMOVE: "audio:remove",
+  SEGMENT_UPDATE: "segment:update",
   UPLOAD_CREATE: "upload:create",
   CONFIG_UPDATE: "config:update",
   JOB_RUN: "job:run",

@@ -120,6 +120,16 @@ const init = () => {
     as: 'episode',
   });
 
+  Anime.Episode.hasMany(Anime.Segment, {
+    onDelete: 'CASCADE',
+    foreignKey: 'episodeId',
+    as: 'segments',
+  });
+  Anime.Segment.belongsTo(Anime.Episode, {
+    foreignKey: 'episodeId',
+    as: 'episode',
+  });
+
   Anime.Episode.hasMany(Anime.Upload, {
     onDelete: 'CASCADE',
     foreignKey: 'episodeId',

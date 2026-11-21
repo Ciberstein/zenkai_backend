@@ -390,6 +390,28 @@ const Subtitle = db.define(
   { tableName: "anime_subtitles", schema: "anime" }
 );
 
+// Tramo de un episodio que el reproductor ofrece saltar: la intro, el ending (creditos) o un
+// resumen del episodio anterior. Los tiempos son segundos del video publicado. `source` dice de
+// donde salio (manual | aniskip | detected) y `confidence` (0-1) cuanto fiarse de los
+// automaticos: lo manual nunca lo pisa una fuente automatica. Un tipo por episodio.
+const Segment = db.define(
+  "anime_segments",
+  {
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true, allowNull: false, field: "id" },
+    episodeId: { type: DataTypes.INTEGER, allowNull: false, field: "episodeId" },
+    type: { type: DataTypes.STRING(12), allowNull: false, field: "type" },
+    start: { type: DataTypes.DOUBLE, allowNull: false, field: "start" },
+    end: { type: DataTypes.DOUBLE, allowNull: false, field: "end" },
+    source: { type: DataTypes.STRING(12), allowNull: false, defaultValue: "manual", field: "source" },
+    confidence: { type: DataTypes.DOUBLE, allowNull: true, field: "confidence" },
+  },
+  {
+    tableName: "anime_segments",
+    schema: "anime",
+    indexes: [{ unique: true, fields: ["episodeId", "type"] }],
+  }
+);
+
 // Video subido desde el admin que espera (o esta pasando por) la conversion a HLS.
 // El navegador sube los archivos originales al bucket privado de subidas con URLs
 // firmadas; el worker los toma de ahi, los convierte, los publica y los borra.
@@ -488,4 +510,4 @@ const SyncState = db.define(
   { tableName: "anime_sync_state", schema: "anime" }
 );
 
-module.exports = { Anime, Genre, AnimeGenre, Episode, Source, Subtitle, Upload, SyncState };
+module.exports = { Anime, Genre, AnimeGenre, Episode, Source, Subtitle, Segment, Upload, SyncState };

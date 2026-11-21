@@ -141,6 +141,25 @@ exports.subtitleFile = catchAsync(async (req, _, next) => {
 
 // Un audio extra (doblaje) para un episodio ya publicado. Puede venir en un archivo de audio o
 // dentro de un video/mkv: se toma su primera pista de audio.
+exports.segment = catchAsync(async (req, _, next) => {
+  const { type } = req.params;
+
+  if (!["intro", "outro", "recap"].includes(type)) {
+    return next(new AppError("Segment type must be intro, outro or recap", 406));
+  }
+
+  if (req.method === "PUT") {
+    const { start, end } = req.body;
+    const valid = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 86400;
+
+    if (!valid(start) || !valid(end) || end <= start) {
+      return next(new AppError("start and end must be seconds, with end after start", 406));
+    }
+  }
+
+  next();
+});
+
 exports.audioRequest = catchAsync(async (req, _, next) => {
   const { filename, size, language, offset = 0 } = req.body;
   const accepted = [...AUDIO_EXT, ...VIDEO_EXT];
