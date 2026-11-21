@@ -18,6 +18,7 @@ const COLUMNS = [
   { schema: "anime", table: "anime_anime", column: "titles", type: "JSONB" },
   { schema: "anime", table: "anime_sync_state", column: "failedPages", type: "JSONB NOT NULL DEFAULT '[]'::jsonb" },
   { schema: "anime", table: "anime_anime", column: "episodesSyncedAt", type: "TIMESTAMP WITH TIME ZONE" },
+  { schema: "anime", table: "anime_anime", column: "thumbnailsSyncedAt", type: "TIMESTAMP WITH TIME ZONE" },
   { schema: "anime", table: "anime_sync_state", column: "startedAt", type: "TIMESTAMP WITH TIME ZONE" },
 ];
 

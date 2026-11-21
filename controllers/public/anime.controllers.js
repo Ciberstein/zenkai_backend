@@ -9,6 +9,8 @@ const query = require("../../utils/catalog.query.util");
 const { fromMal } = require("../../utils/anime.util");
 const { Op } = require("sequelize");
 
+const thumbnails = require("../../services/modules/thumbnails.service");
+
 const { jikan, mal } = services;
 
 // Dias tras los cuales una ficha se considera vieja y se revalida contra Jikan
@@ -147,6 +149,11 @@ exports.episodes = catchAsync(async (req, res) => {
     order: [["number", "ASC"]],
   });
 
+  // Episodios sin miniatura: se piden a Kitsu por detras (la proxima visita ya las tiene).
+  if (thumbnails.due(req.anime, episodes)) {
+    thumbnails.fillFromKitsu(Anime, req.anime).catch((err) => console.error(`[thumbnails] ${req.anime.malId}: ${err.message}`));
+  }
+
   if (!req.sessionAccount) return res.status(200).send(episodes);
 
   const history = await Library.History.findAll({
@@ -191,7 +198,14 @@ exports.episode = catchAsync(async (req, res) => {
     return res.status(404).send({ status: "error", message: "Episode not found" });
   }
 
-  if (!req.sessionAccount) return res.status(200).send(episode);
+  // La web es publica, el reproductor no: un invitado recibe los datos del episodio (titulo,
+  // miniatura…) pero ni las fuentes ni los subtitulos. `locked` le dice al frontend que muestre
+  // la invitacion a iniciar sesion en vez del reproductor.
+  if (!req.sessionAccount) {
+    const { sources, subtitles, segments, ...basic } = episode.toJSON();
+
+    return res.status(200).send({ ...basic, sources: [], subtitles: [], segments: [], locked: true });
+  }
 
   // Con sesion se adjunta lo que el reproductor necesita para retomar el
   // episodio donde se dejo y saber si ya se vio.

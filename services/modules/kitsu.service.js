@@ -86,4 +86,34 @@ const episodes = async (malId, { offset = 0 } = {}) => {
   return list;
 };
 
-module.exports = { episodes };
+// Miniaturas de los episodios de un titulo de MAL: [{ number, thumbnail }]. Solo los que tienen.
+const thumbnails = async (malId) => {
+  const id = await kitsuIdOf(malId);
+  if (!id) return [];
+
+  const list = [];
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const { data } = await get(`/anime/${id}/episodes`, {
+      "page[limit]": PAGE_SIZE,
+      "page[offset]": page * PAGE_SIZE,
+      sort: "number",
+      "fields[episodes]": "number,thumbnail",
+    });
+
+    const rows = data?.data ?? [];
+
+    for (const row of rows) {
+      const { number, thumbnail } = row.attributes ?? {};
+      const url = thumbnail?.large ?? thumbnail?.original ?? thumbnail?.medium ?? null;
+
+      if (Number.isInteger(number) && url) list.push({ number, thumbnail: url });
+    }
+
+    if (rows.length < PAGE_SIZE) break;
+  }
+
+  return list;
+};
+
+module.exports = { episodes, thumbnails };

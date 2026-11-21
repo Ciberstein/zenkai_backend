@@ -205,6 +205,7 @@ const TYPES = {
   ".m3u8": "application/vnd.apple.mpegurl",
   ".ts": "video/mp2t",
   ".vtt": "text/vtt; charset=utf-8",
+  ".jpg": "image/jpeg",
 };
 
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true })
@@ -289,6 +290,24 @@ const findSegments = async (ctx, episode, malId, out, log) => {
   }
 };
 
+// ─── Miniatura ────────────────────────────────────────────────────────────────
+
+// Un fotograma del video a una cuarta parte de su duracion (pasada la intro, sin llegar a los
+// creditos; como mucho al minuto 10), de 640 px de ancho. Sirve de miniatura en la lista de episodios.
+const thumbSeconds = (length) => Math.max(1, Math.min(length * 0.25, 600));
+
+const grabFrame = (input, seconds, target) => ffmpeg([
+  "-y", "-hide_banner", "-loglevel", "error",
+  "-ss", seconds.toFixed(2), "-i", input,
+  "-map", "0:v:0", "-frames:v", "1", "-vf", "scale=640:-2", "-q:v", "4", target,
+]);
+
+// Duracion (s) del video de un manifiesto maestro ya escrito en disco.
+const lengthOf = (masterFile) => {
+  const master = fs.readFileSync(masterFile, "utf8");
+  return hls.duration(fs.readFileSync(path.join(path.dirname(masterFile), hls.videoUri(master)), "utf8"));
+};
+
 // ─── Publicacion ──────────────────────────────────────────────────────────────
 
 // job: { malId, number, video, audio: [{lang, file}], subs: [{lang, file}],
@@ -321,9 +340,22 @@ const publishEpisode = async (ctx, job) => {
       return { dryRun: true, out, files: walk(out).map((f) => path.relative(out, f).split(path.sep).join("/")), tracks, subs };
     }
 
+    // Miniatura del episodio (mejor esfuerzo: sin ella la lista usa la portada de la serie).
+    let hasThumb = false;
+
+    try {
+      await grabFrame(job.video, thumbSeconds(lengthOf(path.join(out, "master.m3u8"))), path.join(out, "thumb.jpg"));
+      hasThumb = true;
+    } catch (err) {
+      log(`No se pudo sacar la miniatura: ${err.message}`);
+    }
+
     await clearPrefix(ctx, prefix);
     const files = await upload(ctx, out, prefix, log);
     await register(ctx, episode, job, subs, urls);
+
+    // El `?v=` evita que se quede en cache la miniatura de una publicacion anterior.
+    if (hasThumb) await episode.update({ thumbnail: `${urls.base}thumb.jpg?v=${Date.now()}` });
     await findSegments(ctx, episode, malId, out, log);
 
     return { url: urls.master, files, tracks, subs };
@@ -452,4 +484,45 @@ const addAudio = async (ctx, job) => {
   }
 };
 
-module.exports = { createContext, closeContext, publishEpisode, addAudio, languageName, iso };
+// ─── Miniatura de un episodio ya publicado ───────────────────────────────────
+
+// Saca el fotograma leyendo el propio HLS publicado (no hace falta tener el video original) y lo
+// sube junto al episodio. job: { malId, number, force }. Sin `force` se salta el episodio que ya
+// tiene una miniatura de este tipo. Devuelve { skipped } o { url }.
+const generateThumbnail = async (ctx, job) => {
+  const { malId, number } = job;
+
+  const anime = await ctx.Anime.Anime.findOne({ where: { malId } });
+  if (!anime) throw new Error(`No hay ningun anime con malId ${malId} en la base`);
+
+  const episode = await ctx.Anime.Episode.findOne({ where: { animeId: anime.id, number } });
+  if (!episode) throw new Error(`${anime.title} no tiene episodio ${number}`);
+
+  const prefix = `anime/${malId}/${number}/`;
+  const masterKey = `${prefix}master.m3u8`;
+
+  const published = await ctx.Anime.Source.findOne({ where: { episodeId: episode.id, type: "hls" } });
+  if (!published || !published.url.endsWith(masterKey)) return { skipped: "sin video publicado por Zenkai" };
+
+  if (!job.force && episode.thumbnail?.includes(`${prefix}thumb.jpg`)) return { skipped: "ya tiene miniatura" };
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `zenkai-thumb-${malId}-${number}-`));
+
+  try {
+    const master = await storage.read(ctx.r2.bucket, masterKey);
+    const playlist = await storage.read(ctx.r2.bucket, `${prefix}${hls.videoUri(master)}`);
+    const target = path.join(dir, "thumb.jpg");
+
+    await grabFrame(`${ctx.r2.base}/${masterKey}`, thumbSeconds(hls.duration(playlist)), target);
+    await storage.put(ctx.r2.bucket, `${prefix}thumb.jpg`, fs.readFileSync(target), { contentType: "image/jpeg", cacheControl: "public, max-age=300" });
+
+    const url = `${ctx.r2.base}/${prefix}thumb.jpg?v=${Date.now()}`;
+    await episode.update({ thumbnail: url });
+
+    return { url };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+module.exports = { createContext, closeContext, publishEpisode, addAudio, generateThumbnail, languageName, iso };

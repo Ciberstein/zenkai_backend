@@ -184,6 +184,12 @@ const Anime = db.define(
     // Ultima vez que se trajo la lista de episodios de este titulo. Separada de
     // `syncedAt` porque son dos trabajos distintos: la ficha se refresca sola y
     // los episodios cuestan una peticion por titulo.
+    // Ultima vez que se pidieron a Kitsu las miniaturas de los episodios (ver thumbnails.service).
+    thumbnailsSyncedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: "thumbnailsSyncedAt",
+    },
     episodesSyncedAt: {
       type: DataTypes.DATE,
       allowNull: true,

@@ -247,6 +247,33 @@ example) are used automatically, mapped by their language tag. Loose `--audio` a
 same language. Image-based subtitles (PGS, DVD) cannot be converted and are skipped.
 Spanish is the default subtitle when present, otherwise the first one.
 
+### Who can watch
+
+The site is public; the player is not. `GET /public/anime/:malId/episodes/:number` answers a guest with the episode's
+data (title, thumbnail, duration…) and `locked: true`, but **no sources, subtitles or segments**. The frontend then shows
+a "log in to watch" screen and, after logging in or signing up, comes back to that episode. Note that the HLS files
+themselves sit on a public bucket: hiding the URLs in the API stops casual access, but anyone who already knows a
+`master.m3u8` URL can still open it. Real protection would need signed URLs or Cloudflare Access in front of the bucket.
+
+### Episode thumbnails
+
+The episode list shows a thumbnail per episode. Where it comes from, best first:
+
+1. **A frame of the video itself**, taken at 25 % of its duration (640 px wide) when the episode is published
+   (`anime/<malId>/<ep>/thumb.jpg`). For episodes published earlier: `npm run generate:thumbnails`
+   (`-- --anime 52991 [--episode 3] [--force]`); it reads the published HLS, no original file needed.
+2. **Kitsu's thumbnail**, fetched on demand the first time someone opens an anime's episode list that has episodes
+   without one (`anime.thumbnailsSyncedAt` records when; retried after 30 days). It never overwrites a thumbnail of
+   our own.
+3. Otherwise the card falls back to the blurred series cover.
+
+### Language preference in the player
+
+The player picks the audio and subtitles in this order: what the user chose by hand last time, then the profile
+language (`profile.language`; `es` also matches `es-419` and the other way round) and finally the track the manifest or the
+admin marks as default. Subtitles stay off if the user turned them off. Saving a different profile language forgets the
+manual choice so the new one takes effect.
+
 ### Skip intro / credits / recap
 
 Each episode can have **segments** (`anime.anime_segments`: `type`, `start`, `end` in seconds,
