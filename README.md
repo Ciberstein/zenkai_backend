@@ -176,6 +176,14 @@ subtitles and extra audio tracks (`ep01.es.srt`, `ep01.es.m4a`: the language is 
 from the file name, or typed in). There are no folders to create: the destination
 `anime/<malId>/<episode>/` is derived from the episode.
 
+**Several episodes at once:** the episodes page has an **↑ Subir varios** button. Drop all the files
+(videos and, if you have them, their subtitles and audio tracks): each one is assigned to the episode its
+name says (`01.mkv`, `Serie - 05 [1080p].mkv`, `[Group] Serie - 05 (BD).mkv`, `S01E05`, `05.es.srt`…), and you can
+fix the number or the language before starting. Problems are flagged per episode (no number, the episode does not
+exist, no video, more than one video, an upload already running) and block the start; episodes that already have a
+video are marked as *replaces*. Episodes are uploaded one after another with the same create / upload / complete
+calls as the single upload, so there is no new endpoint; a failed episode does not stop the rest and can be retried.
+
 ```
 browser ──PUT (signed URL)──▶ incoming/<token>/ ──▶ worker ──▶ anime/<malId>/<episode>/ (HLS)
    │                                 ▲                │            (all in the same bucket)
