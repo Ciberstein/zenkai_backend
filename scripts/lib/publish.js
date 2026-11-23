@@ -10,7 +10,7 @@ const hls = require("../../utils/hls.util");
 const segments = require("../../services/modules/segments.service");
 
 // Nucleo de la publicacion de episodios: convierte un video a HLS con ffmpeg (una
-// calidad, una pista de audio por idioma), pasa los subtitulos a WebVTT, lo sube
+// calidades —la del original y las inferiores—, una pista de audio por idioma), pasa los subtitulos a WebVTT, lo sube
 // a Cloudflare R2 y registra la fuente y los subtitulos en la base. Lo usan
 // `publish.episode.js` (un episodio) y `publish.folder.js` (una carpeta entera).
 //
@@ -109,6 +109,30 @@ const browserSafe = (video) =>
 // Subtitulos que se pueden pasar a texto; los de imagen (PGS, DVD) no.
 const TEXT_SUBS = new Set(["ass", "ssa", "subrip", "srt", "webvtt", "mov_text", "text", "ttml"]);
 
+// ─── Escalera de calidades ────────────────────────────────────────────────────
+
+// Alturas de las calidades que se generan por debajo de la del original.
+const LADDER = [2160, 1080, 720, 480];
+
+// Tope de tasa por calidad (Mbps): sin él, un CRF fijo infla las escenas complejas y la calidad
+// deja de poder cambiar de forma suave según la conexión del espectador.
+const CAPS = { 2160: { crf: 21, rate: 16 }, 1080: { crf: 21, rate: 6 }, 720: { crf: 22, rate: 3.5 }, 480: { crf: 23, rate: 1.6 } };
+const capFor = (height) => CAPS[LADDER.filter((rung) => rung >= height).pop() ?? 2160];
+
+// Altura del video, del texto que imprime ffmpeg ("..., 1920x1080 [SAR ...").
+const heightOf = (video) => {
+  const match = /(?:^|[\s,])(\d{2,5})x(\d{2,5})(?=[\s,\[]|$)/.exec(video?.rest ?? "");
+  return match ? Number(match[2]) - (Number(match[2]) % 2) : null;
+};
+
+// Calidades a generar, de mayor a menor: la del propio video (sea 4K o 1080p) y, por debajo, las
+// de la escalera que le queden claramente por debajo. Nunca se amplía. Sin altura legible, solo la original.
+const renditions = (height) => {
+  if (!height) return [{ height: null }];
+
+  return [{ height }, ...LADDER.filter((rung) => rung < height * 0.9).map((rung) => ({ height: rung }))];
+};
+
 const posix = (p) => p.replace(/\\/g, "/");
 
 const convert = async (out, job, log) => {
@@ -116,8 +140,16 @@ const convert = async (out, job, log) => {
 
   if (!info.video) throw new Error(`${path.basename(job.video)} no tiene pista de video`);
 
-  const copy = !job.reencode && browserSafe(info.video);
-  log(`Video ${info.video.codec}: ${copy ? "se copia sin recodificar" : "se recodifica a H.264 (puede tardar)"}`);
+  // Con varias calidades todas se recodifican: así comparten los mismos fotogramas clave y el
+  // reproductor puede saltar de una a otra sin cortes. Con una sola (video pequeño) se copia si se puede.
+  const rungs = renditions(heightOf(info.video));
+  const copy = rungs.length === 1 && !job.reencode && browserSafe(info.video);
+
+  log(rungs.length > 1
+    ? `Video ${info.video.codec} de ${rungs[0].height}p: se generan ${rungs.map((rung) => `${rung.height}p`).join(", ")} (puede tardar)`
+    : `Video ${info.video.codec}: ${copy ? "se copia sin recodificar" : "se recodifica a H.264 (puede tardar)"}`);
+
+  const videoNames = rungs.map((rung) => (rung.height ? `v${rung.height}` : "video"));
 
   // Audio en el orden en que saldra en el manifiesto: primero lo que trae el archivo, luego lo suelto.
   const audioLang = job.audioLang ?? "ja";
@@ -133,10 +165,10 @@ const convert = async (out, job, log) => {
   const names = tracks.map((track, index) => (tracks.filter((t) => t.lang === track.lang).length > 1 ? `${track.lang}${index}` : track.lang));
   const main = Math.max(0, tracks.findIndex((t) => t.lang === audioLang));
 
-  for (const dir of ["video", ...names]) fs.mkdirSync(path.join(out, dir), { recursive: true });
+  for (const dir of [...videoNames, ...names]) fs.mkdirSync(path.join(out, dir), { recursive: true });
 
   const variants = [
-    "v:0,agroup:aud,name:video",
+    ...videoNames.map((name, index) => `v:${index},agroup:aud,name:${name}`),
     ...tracks.map((track, index) => `a:${index},agroup:aud,language:${track.lang},name:${names[index]}${index === main ? ",default:yes" : ""}`),
   ].join(" ");
 
@@ -145,11 +177,22 @@ const convert = async (out, job, log) => {
     "-i", job.video,
     ...extra.flatMap((a) => ["-i", a.file]),
     "-map_metadata", "-1", "-map_chapters", "-1",
-    "-map", `0:${info.video.index}`,
+    ...rungs.flatMap(() => ["-map", `0:${info.video.index}`]),
     ...tracks.flatMap((track) => ["-map", track.map]),
     ...(copy
       ? ["-c:v", "copy"]
-      : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-g", "48", "-keyint_min", "48", "-sc_threshold", "0"]),
+      : rungs.flatMap((rung, index) => {
+        const cap = rung.height ? capFor(rung.height) : { crf: 20, rate: null };
+
+        return [
+          ...(index > 0 ? [`-filter:v:${index}`, `scale=-2:${rung.height}`] : []),
+          `-c:v:${index}`, "libx264", `-preset:v:${index}`, "veryfast", `-crf:v:${index}`, String(cap.crf),
+          ...(cap.rate ? [`-maxrate:v:${index}`, `${cap.rate}M`, `-bufsize:v:${index}`, `${cap.rate * 2}M`] : []),
+          `-pix_fmt:v:${index}`, "yuv420p",
+          // Un fotograma clave cada 2 s en todas las calidades (con cualquier fps): los segmentos coinciden.
+          `-force_key_frames:v:${index}`, "expr:gte(t,n_forced*2)", `-sc_threshold:v:${index}`, "0",
+        ];
+      })),
     "-c:a", "aac", "-b:a", "160k", "-ac", "2",
     "-f", "hls", "-hls_time", "6", "-hls_playlist_type", "vod",
     "-hls_flags", "independent_segments", "-hls_segment_type", "mpegts",
@@ -159,7 +202,7 @@ const convert = async (out, job, log) => {
     posix(path.join(out, "%v", "index.m3u8")),
   ]);
 
-  log(`HLS generado: ${tracks.length} pista(s) de audio (${names.join(", ")})`);
+  log(`HLS generado: ${videoNames.length} calidad(es), ${tracks.length} pista(s) de audio (${names.join(", ")})`);
 
   // Subtitulos: WebVTT, uno por idioma. Lo suelto manda sobre lo incrustado.
   fs.mkdirSync(path.join(out, "subs"), { recursive: true });

@@ -138,6 +138,14 @@ The model follows how large platforms work: **one video, many tracks**.
   one `master.m3u8` lists the video renditions and one `EXT-X-MEDIA:TYPE=AUDIO`
   entry per language. The player lets the user switch audio and quality without
   loading another video, so a dub is an extra audio track, not another source.
+- **Qualities are generated on publish, from the source downwards.** Upload one file at its best quality
+  and the pipeline produces the original height plus every step of 1080p / 720p / 480p that is clearly
+  below it (never upscaling): a 4K file gives 2160p + 1080p + 720p + 480p, a 1080p file gives 1080p + 720p +
+  480p, a 720p file gives 720p + 480p. Each rendition is capped (about 16 / 6 / 3.5 / 1.6 Mbps) and they all
+  share a keyframe every 2 s, so the player switches between them without a hiccup. With several renditions
+  all of them are re-encoded; a file that already is one small browser-safe H.264 is still copied as is.
+  Roughly 1.5 GB per 24-minute episode for the 1080p ladder, and the processing takes longer than before.
+  Episodes published earlier keep their single quality.
 - **Subtitles** are separate WebVTT files, one per language, independent from the
   sources: the same track works with any quality or server of the episode.
   Subtitle renditions declared in the HLS manifest also show up in the player menu.
