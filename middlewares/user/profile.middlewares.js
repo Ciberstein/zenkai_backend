@@ -6,6 +6,40 @@ const catchAsync = require("../../utils/catchAsync");
 // Cloudinary). Aceptar aqui una URL cualquiera dejaria meter imagenes de terceros en la web.
 const FIELDS = ["nickname", "cover", "bio", "country", "language", "preferences"];
 
+const CAPTION_FONTS = ["default", "sans", "serif", "mono", "casual"];
+
+// Las preferencias del reproductor se limpian clave a clave: solo entra lo conocido y con su rango,
+// lo demas se descarta. Devuelve null si el valor no es un objeto.
+const cleanPreferences = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const out = {};
+  const bool = (key) => { if (typeof value[key] === "boolean") out[key] = value[key]; };
+  const text = (key, max) => { if (typeof value[key] === "string" && value[key].length <= max) out[key] = value[key]; };
+
+  bool("autoplay");
+  bool("autoNext");
+  text("quality", 16);
+  text("language", 16);
+
+  const sub = value.subtitles;
+
+  if (sub && typeof sub === "object" && !Array.isArray(sub)) {
+    const size = Number(sub.size);
+    const opacity = Number(sub.opacity);
+
+    if (!Number.isFinite(size) || size < 50 || size > 200
+      || !Number.isFinite(opacity) || opacity < 0 || opacity > 100
+      || !/^#[0-9a-f]{6}$/i.test(sub.color) || !CAPTION_FONTS.includes(sub.font)) {
+      return false;
+    }
+
+    out.subtitles = { size, opacity, color: sub.color.toLowerCase(), font: sub.font };
+  }
+
+  return out;
+};
+
 const MAX_AVATAR = 5 * 1024 * 1024;
 
 const parseAvatar = multer({
@@ -53,6 +87,16 @@ exports.update = catchAsync(async (req, _, next) => {
 
   if (payload.bio && String(payload.bio).length > 500) {
     return next(new AppError(`Bio cannot exceed 500 characters`, 406));
+  }
+
+  if (payload.preferences !== undefined) {
+    const preferences = cleanPreferences(payload.preferences);
+
+    if (!preferences) {
+      return next(new AppError(`Invalid preferences`, 406));
+    }
+
+    payload.preferences = preferences;
   }
 
   req.payload = payload;

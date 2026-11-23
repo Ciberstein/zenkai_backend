@@ -268,6 +268,14 @@ The episode list shows a thumbnail per episode. Where it comes from, best first:
    our own.
 3. Otherwise the card falls back to the blurred series cover.
 
+### Subtitle appearance
+
+Size (50–200 %), background opacity (0–100 %), text colour (`#rrggbb`) and font (`default`, `sans`, `serif`,
+`mono`, `casual`) live in the profile: `PATCH /me/profile` with `{ "preferences": { "subtitles": { size, opacity, color,
+font } } }`. `preferences` is validated key by key (anything unknown is dropped, an out-of-range value answers `406`) and
+merged with what the profile already has, so sending only `subtitles` does not wipe `autoplay` or the rest. The settings
+follow the account across devices; the frontend edits them in Settings → Player.
+
 ### Language preference in the player
 
 The player picks the audio and subtitles in this order: what the user chose by hand last time, then the profile

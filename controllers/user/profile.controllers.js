@@ -81,6 +81,11 @@ exports.update = catchAsync(async (req, res) => {
     where: { accountId: req.sessionAccount.id },
   });
 
+  // Las preferencias llegan parciales (p. ej. solo los subtitulos): se funden con las que ya hay.
+  if (req.payload.preferences) {
+    req.payload.preferences = { ...profile.preferences, ...req.payload.preferences };
+  }
+
   await profile.update(req.payload);
 
   services.logger.fromRequest(req, {
