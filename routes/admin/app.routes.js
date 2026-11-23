@@ -17,7 +17,6 @@ router.get("/config",
 );
 
 router.patch("/config/:id",
-  middlewares.auth.restrict(40000),
   controllers.app.update,
 );
 

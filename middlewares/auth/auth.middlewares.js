@@ -55,7 +55,8 @@ exports.optional = catchAsync(async (req, _, next) => {
   next();
 });
 
-exports.restrict = (authority) => (req, _, next) => {
+// restrictTo(ROLES.ADMIN): deja pasar a esa autoridad o a una mayor.
+exports.restrictTo = (authority) => (req, _, next) => {
   if (!req.sessionAccount || req.sessionAccount.authority < authority) {
     return next(new AppError(`You do not have permission to perform this action`, 403));
   }

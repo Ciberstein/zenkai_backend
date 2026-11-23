@@ -68,7 +68,8 @@ A request always follows the same flow:
 | `/api/v1/auth` | public | register, verify (+ resend), recovery (+ reset), login, logout, refresh, validate |
 | `/api/v1/public` | public (optional session) | catalog, anime pages, episodes, config, languages |
 | `/api/v1/me` | session required | account, profile, watchlist, favorites, watch history |
-| `/api/v1/admin` | authority >= 30000 | accounts, catalog, episodes, sources, jobs, logs |
+| `/api/v1/admin/anime` | authority >= 30000 (moderator) | catalog, episodes, sources, audio, subtitles, segments |
+| `/api/v1/admin/{accounts,app,jobs}` | authority >= 40000 (admin) | accounts, config, logs, jobs |
 
 `GET /api/v1/public/anime/:malId/episodes/:number` accepts an optional session: when
 the caller is logged in the response includes their `history`

@@ -16,9 +16,7 @@ router.get("/",
   controllers.jobs.list,
 );
 
-// Lanzar una sincronizacion gasta cuota de MyAnimeList y Jikan: solo admin.
 router.post("/:name/run",
-  middlewares.auth.restrict(40000),
   controllers.jobs.run,
 );
 

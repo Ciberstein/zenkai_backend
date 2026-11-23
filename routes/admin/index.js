@@ -1,4 +1,5 @@
 const express = require("express");
+const ROLES = require("../../utils/roles");
 
 // ROUTES
 const routes = {
@@ -15,13 +16,14 @@ const middlewares = {
 
 const router = express.Router();
 
-// 30000 is the moderator floor (see seeders/data/role.data.seeders.js).
-// Anything stricter is declared per-route below.
-router.use(middlewares.auth.protect, middlewares.auth.restrict(30000));
+const { restrictTo } = middlewares.auth;
 
-router.use("/app", routes.app);
+router.use(middlewares.auth.protect, restrictTo(ROLES.MODERATOR));
+
+// El moderador solo gestiona el catalogo; el resto del panel es del administrador.
 router.use("/anime", routes.anime);
-router.use("/accounts", routes.accounts);
-router.use("/jobs", routes.jobs);
+router.use("/app", restrictTo(ROLES.ADMIN), routes.app);
+router.use("/accounts", restrictTo(ROLES.ADMIN), routes.accounts);
+router.use("/jobs", restrictTo(ROLES.ADMIN), routes.jobs);
 
 module.exports = router;

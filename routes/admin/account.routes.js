@@ -26,9 +26,7 @@ router.get("/:id",
   controllers.accounts.account,
 );
 
-// Changing authority or ban status is admin-only, not moderator.
 router.patch("/:id",
-  middlewares.auth.restrict(40000),
   middlewares.accounts.account,
   middlewares.accounts.update,
   controllers.accounts.update,
