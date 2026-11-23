@@ -6,10 +6,16 @@ const AppError = require("../../utils/appError");
 const LOG_ACTIONS = require("../../utils/log.actions");
 const { hash } = require("../../utils/hash.util");
 const { verifyJWT } = require("../../utils/jwt");
+const { Op } = require("sequelize");
 
 // Segundos hasta poder pedir otro codigo. Constante a proposito: si dependiera de que la cuenta
 // exista, la respuesta revelaria que correos estan registrados.
 const RESEND_WAIT = 60;
+
+// Tras rotar el token de refresco, el anterior aguanta unos segundos mas. Dos pestanas (o dos
+// peticiones) que renuevan a la vez llegan con el mismo token: sin este margen la segunda lo
+// encuentra ya borrado, falla y cierra la sesion de las dos.
+const REFRESH_GRACE_MS = 30_000;
 
 const meta = (req) => ({ ip: req.ip, agent: req.headers["user-agent"] ?? null });
 
@@ -166,14 +172,25 @@ exports.refresh = catchAsync(async (req, res, next) => {
     return next(new AppError(`Session is no longer valid`, 401));
   }
 
-  // Rotate: the old session row is dropped as the new one is written, so a
-  // stolen refresh token stops working as soon as the real user refreshes.
-  await session.destroy();
+  // Rotate: the old token stops working right after the new one is written (a few seconds of
+  // grace, see REFRESH_GRACE_MS), so a stolen refresh token dies as soon as the real user refreshes.
+  const graceEnd = new Date(Date.now() + REFRESH_GRACE_MS);
+  if (session.expiresAt > graceEnd) await session.update({ expiresAt: graceEnd });
+
+  await Accounts.Session.destroy({ where: { accountId: account.id, expiresAt: { [Op.lt]: new Date() } } });
   await services.auth.issue(res, account, meta(req));
 
   return res.status(200).send({ message: "Session refreshed" });
 });
 
-exports.validate = catchAsync(async (req, res) => {
+exports.validate = catchAsync(async (req, res, next) => {
+  // Sin acceso valido pero con refresco: el acceso solo dura 15 min y el navegador lo borra,
+  // asi que al abrir la web pasado ese rato no hay que tratar al usuario como invitado. Un 401
+  // hace que el frontend renueve la sesion y repita la pregunta. Un invitado de verdad no trae
+  // cookie de refresco y recibe { auth: false } como siempre.
+  if (!req.sessionAccount && req.cookies?.[services.auth.REFRESH_COOKIE]) {
+    return next(new AppError(`Session expired`, 401));
+  }
+
   return res.status(200).send({ auth: Boolean(req.sessionAccount) });
 });
