@@ -422,12 +422,14 @@ const minutes = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.round(se
 // manifiesto: no hace falta volver a subir el video. Si ya habia una pista de ese idioma, la
 // reemplaza (en una carpeta nueva: los segmentos viejos estan cacheados "para siempre").
 //
-// job: { malId, number, file, lang, offsetMs, log }
+// job: { malId, number, file, lang, offsetMs, track, log }
+//   track es la pista de audio del archivo que se usa, contando desde 1 (por defecto la primera).
 //   offsetMs > 0 retrasa el audio, < 0 lo adelanta: para corregir un doblaje desfasado.
 const addAudio = async (ctx, job) => {
   const log = job.log ?? ((message) => console.log(`› ${message}`));
   const { malId, number, file, lang } = job;
   const offsetMs = Number(job.offsetMs) || 0;
+  const track = Number.isInteger(Number(job.track)) && Number(job.track) >= 1 ? Number(job.track) : 1;
 
   const anime = await ctx.Anime.Anime.findOne({ where: { malId } });
   if (!anime) throw new Error(`No hay ningun anime con malId ${malId} en la base`);
@@ -464,6 +466,9 @@ const addAudio = async (ctx, job) => {
     // 2. Convertir el audio nuevo
     const info = await probe(file);
     if (!info.audio.length) throw new Error('El archivo no tiene ninguna pista de audio');
+    if (track > info.audio.length) {
+      throw new Error(`El archivo tiene ${info.audio.length} ${info.audio.length === 1 ? 'pista de audio' : 'pistas de audio'} y se pidió la ${track}`);
+    }
 
     const out = path.join(dir, 'out');
     fs.mkdirSync(out);
@@ -472,12 +477,12 @@ const addAudio = async (ctx, job) => {
       ? ['-af', `adelay=${offsetMs}:all=1`]
       : offsetMs < 0 ? ['-af', `atrim=start=${-offsetMs / 1000},asetpts=PTS-STARTPTS`] : [];
 
-    log(`Convirtiendo el audio (${lang}${offsetMs ? `, desfase ${offsetMs} ms` : ''})`);
+    log(`Convirtiendo el audio (${lang}${info.audio.length > 1 ? `, pista ${track} de ${info.audio.length}` : ''}${offsetMs ? `, desfase ${offsetMs} ms` : ''})`);
 
     await ffmpeg([
       '-y', '-hide_banner', '-loglevel', 'warning', '-stats',
       '-i', file,
-      '-map', `0:${info.audio[0].index}`, '-vn', '-map_metadata', '-1',
+      '-map', `0:${info.audio[track - 1].index}`, '-vn', '-map_metadata', '-1',
       ...shift,
       '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
       '-f', 'hls', '-hls_time', '6', '-hls_playlist_type', 'vod',

@@ -13,7 +13,8 @@ const { createContext, closeContext, addAudio } = require("./lib/publish");
 //   --anime      id de MyAnimeList del anime
 //   --episode    numero del episodio; debe estar publicado con publish:episode / el admin
 //   --audio L=F  idioma y archivo. Vale un archivo de audio o un video/mkv (se usa su primera
-//                pista de audio). Con region para distinguir doblajes: es, es-419, es-ES…
+//                pista de audio, o la que indique --track). Con region para distinguir doblajes: es, es-419, es-ES…
+//   --track      pista de audio del archivo que se usa, contando desde 1 (por defecto la primera)
 //   --offset     desfase en milisegundos para corregir un doblaje que no cuadra: positivo lo
 //                retrasa, negativo lo adelanta (por defecto 0)
 //
@@ -44,6 +45,7 @@ try {
       episode: { type: "string" },
       audio: { type: "string" },
       offset: { type: "string", default: "0" },
+      track: { type: "string", default: "1" },
     },
   }));
 } catch (err) {
@@ -53,10 +55,12 @@ try {
 const malId = Number(opts.anime);
 const number = Number(opts.episode);
 const offsetMs = Number(opts.offset);
+const track = Number(opts.track);
 
 if (!Number.isInteger(malId) || !Number.isInteger(number)) fail("--anime y --episode son obligatorios y deben ser numeros");
 if (!opts.audio || !opts.audio.includes("=")) fail("--audio espera IDIOMA=ARCHIVO (por ejemplo es-419=./doblaje.m4a)");
 if (!Number.isFinite(offsetMs)) fail("--offset debe ser un numero de milisegundos");
+if (!Number.isInteger(track) || track < 1) fail("--track debe ser un numero entero desde 1");
 
 const at = opts.audio.indexOf("=");
 const lang = opts.audio.slice(0, at);
@@ -69,7 +73,7 @@ if (!fs.existsSync(file)) fail(`No existe el archivo: ${file}`);
   const ctx = await createContext();
 
   try {
-    const result = await addAudio(ctx, { malId, number, file, lang, offsetMs });
+    const result = await addAudio(ctx, { malId, number, file, lang, offsetMs, track });
 
     console.log(`\n✓ Audio ${lang} ${result.replaced ? "reemplazado" : "añadido"}: el episodio tiene ahora ${result.tracks} pistas de audio`);
     for (const warning of result.warnings) console.log(`  ⚠ ${warning}`);

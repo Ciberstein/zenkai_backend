@@ -125,7 +125,7 @@ Each episode has **sources** (`anime.anime_sources`) and **subtitle tracks**
 | `DELETE /sources/:id` | Remove a source |
 | `POST /episodes/:id/subtitles` | `{ language, label, url, default }` — a WebVTT (`.vtt`) file already hosted somewhere |
 | `POST /episodes/:id/subtitles/upload?language=&label=&filename=&default=` | The body is the subtitle file itself (`application/octet-stream`, up to 5 MB): `.ass`, `.ssa`, `.srt` or `.vtt` |
-| `POST /episodes/:id/audio-uploads` | `{ filename, size, language, offset }` — queue an extra audio (another dub) for an episode already published as HLS; returns a signed URL to upload it, then call `POST /uploads/:id/complete` |
+| `POST /episodes/:id/audio-uploads` | `{ filename, size, language, offset, track }` — queue an extra audio (`track` = which audio track of the file to use, counting from 1; default 1) (another dub) for an episode already published as HLS; returns a signed URL to upload it, then call `POST /uploads/:id/complete` |
 | `PATCH /episodes/:id/audio/:dir` | `{ name }` — set the name an audio track is shown with (`Español latino`); up to 40 characters, unique within the episode; an empty name goes back to the language's name. Only the manifest changes |
 | `PATCH /subtitles/:id` | `{ label?, language?, default? }` — edit how a subtitle track is shown (up to 60 characters), its language code (unique per episode) or make it the default (only one per episode). The `.vtt` file is not touched |
 | `DELETE /subtitles/:id` | Remove a subtitle track |
@@ -178,13 +178,22 @@ subtitles and extra audio tracks (`ep01.es.srt`, `ep01.es.m4a`: the language is 
 from the file name, or typed in). There are no folders to create: the destination
 `anime/<malId>/<episode>/` is derived from the episode.
 
-**Several episodes at once:** the episodes page has an **↑ Subir varios** button. Drop all the files
-(videos and, if you have them, their subtitles and audio tracks): each one is assigned to the episode its
-name says (`01.mkv`, `Serie - 05 [1080p].mkv`, `[Group] Serie - 05 (BD).mkv`, `S01E05`, `05.es.srt`…), and you can
-fix the number or the language before starting. Problems are flagged per episode (no number, the episode does not
-exist, no video, more than one video, an upload already running) and block the start; episodes that already have a
-video are marked as *replaces*. Episodes are uploaded one after another with the same create / upload / complete
-calls as the single upload, so there is no new endpoint; a failed episode does not stop the rest and can be retried.
+**Several episodes at once:** the episodes page has an **↑ Subir varios** button. Drop all the files (videos,
+subtitles and audio tracks): each one is assigned to the episode its name says (`01.mkv`, `Serie - 05 [1080p].mkv`,
+`[Group] Serie - 05 (BD).mkv`, `S01E05`, `05.es.srt`, `05.lat.m4a`…), and you can fix the number or the language
+before starting.
+
+- An episode **with a video** is uploaded whole (its subtitles and audios travel in the same job).
+- An episode **without a video** adds its subtitles and audios to the video it already has: subtitles are saved
+  right away (`subtitles/upload`, labelled with the language without region), and an audio goes through
+  `audio-uploads` and is added by the worker. An audio needs the episode to be already published as HLS, and only
+  **one audio per episode per batch** fits, because an episode takes one conversion job at a time; the other one goes
+  in the next batch.
+
+Problems are flagged per episode (no number, the episode does not exist, more than one video, two subtitles in the
+same language, audio without a published video, an upload already running) and block the start; episodes that
+already have a video are marked as *replaces*. Episodes are uploaded one after another with the same calls as the
+individual uploads, so there is no new endpoint; a failed episode does not stop the rest and can be retried.
 
 ```
 browser ──PUT (signed URL)──▶ incoming/<token>/ ──▶ worker ──▶ anime/<malId>/<episode>/ (HLS)

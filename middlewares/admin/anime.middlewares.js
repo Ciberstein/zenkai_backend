@@ -161,7 +161,7 @@ exports.segment = catchAsync(async (req, _, next) => {
 });
 
 exports.audioRequest = catchAsync(async (req, _, next) => {
-  const { filename, size, language, offset = 0 } = req.body;
+  const { filename, size, language, offset = 0, track = 1 } = req.body;
   const accepted = [...AUDIO_EXT, ...VIDEO_EXT];
 
   if (!filename || !accepted.includes(extOf(filename))) {
@@ -178,6 +178,10 @@ exports.audioRequest = catchAsync(async (req, _, next) => {
 
   if (!Number.isInteger(offset) || Math.abs(offset) > 60000) {
     return next(new AppError("Offset must be a whole number of milliseconds between -60000 and 60000", 406));
+  }
+
+  if (!Number.isInteger(track) || track < 1 || track > 64) {
+    return next(new AppError("Track must be a whole number from 1 (the first audio track of the file)", 406));
   }
 
   next();

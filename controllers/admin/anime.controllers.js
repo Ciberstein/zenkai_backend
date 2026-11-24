@@ -406,7 +406,7 @@ exports.createAudioUpload = catchAsync(async (req, res) => {
     throw new AppError(`Uploads are not configured: missing ${absent.join(", ")}`, 503);
   }
 
-  const { filename, size, language, offset = 0 } = req.body;
+  const { filename, size, language, offset = 0, track = 1 } = req.body;
 
   const published = await Anime.Source.findOne({ where: { episodeId: req.episode.id, type: "hls" } });
 
@@ -422,7 +422,7 @@ exports.createAudioUpload = catchAsync(async (req, res) => {
   const upload = await Anime.Upload.create({
     episodeId: req.episode.id,
     accountId: req.sessionAccount?.id ?? null,
-    options: { kind: "audio", offset },
+    options: { kind: "audio", offset, track },
     files: [{ kind: "audio", lang: language, name: filename, size, key }],
   });
 

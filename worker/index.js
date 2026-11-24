@@ -101,6 +101,7 @@ const handle = async (ctx, upload) => {
         file: local.get(file.key),
         lang: file.lang,
         offsetMs: upload.options.offset,
+        track: upload.options.track,
         log: say,
       });
 
