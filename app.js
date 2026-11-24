@@ -40,9 +40,12 @@ app.use(express.json());
 // Global rate limit for API traffic. The catalog endpoints proxy Jikan and
 // are cached in Redis, so the limit here protects our own process, not the
 // upstream — the Jikan queue in services/modules/jikan.service.js does that.
+// Disabled for now: set RATE_LIMIT=on to enable it again (the stricter limiter on the
+// auth routes that send e-mail or check codes stays active either way).
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 300,
+  skip: () => process.env.RATE_LIMIT !== "on",
   standardHeaders: true,
   legacyHeaders: false,
 });

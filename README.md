@@ -35,6 +35,7 @@ background (see [Catalog sync](#catalog-sync)).
 | `MAL_CLIENT_ID` | yes for sync | Client ID of a MyAnimeList app ([myanimelist.net/apiconfig](https://myanimelist.net/apiconfig), free) |
 | `JIKAN_BASE_URL` / `JIKAN_CACHE_TTL` | no | Jikan endpoint and cache TTL in seconds |
 | `REDIS_URL` | recommended | Redis connection URL (default `redis://localhost:6379`) |
+| `RATE_LIMIT` | no | The global API rate limit (300 requests / 15 min per IP) is off by default; set `on` to enable it. The limiter on the e-mail/code endpoints is always active |
 | `TRUST_PROXY` | no | Number of trusted proxies in front of the app (default `1`, which fits Railway; use `2` when Cloudflare is also in front). Needed so the rate limiter sees the real client IP |
 | `RESEND_API_KEY` / `MAIL_FROM` | for e-mail verification | [Resend](https://resend.com) API key and sender (`Zenkai <no-reply@yourdomain.com>`, on a domain verified in Resend). **Without both, sign-up works as before, with no e-mail check** |
 | `CLOUDINARY_CLOUD_NAME` / `CLOUDINARY_API_KEY` / `CLOUDINARY_API_SECRET` | for profile photos | [Cloudinary](https://cloudinary.com) credentials. Photos go to the `zenkai/avatars` folder. Without them, uploading a photo answers `501` |
