@@ -30,6 +30,12 @@ const ISO = {
   pol: "pl", nld: "nl", dut: "nl", swe: "sv", tha: "th", vie: "vi", ind: "id",
 };
 
+// Los doblajes latinos suelen venir etiquetados "spa" con "Latino" en el título de la pista:
+// se reconocen como es-419 para que no se confundan con el español de España.
+const LATAM = /\b(lat|latino|latam|latinoam[eé]rica|es-?419)/i;
+const regional = (lang, title) => (lang === "es" && LATAM.test(title ?? "") ? "es-419" : lang);
+const sameLang = (a, b) => String(a).toLowerCase().replace(/^lat$/, "es-419") === String(b).toLowerCase().replace(/^lat$/, "es-419");
+
 const iso = (code) => {
   const value = (code ?? "").toLowerCase();
   if (!value || value === "und") return null;
@@ -99,8 +105,15 @@ const STREAM = /Stream #0:(\d+)(?:\[0x[0-9a-fA-F]+\])?(?:\((\w+)\))?[^:\n]*: (Vi
 // absoluto del contenedor: asi no se confunde el video con una portada incrustada.
 const probe = async (file) => {
   const text = await ffmpeg(["-hide_banner", "-i", file], { capture: true });
-  const streams = [...text.matchAll(STREAM)]
-    .map(([, index, lang, kind, codec, rest]) => ({ index: Number(index), lang: iso(lang), kind: kind.toLowerCase(), codec, rest }));
+  const found = [...text.matchAll(STREAM)];
+  const streams = found.map((match, i) => {
+    const [whole, index, lang, kind, codec, rest] = match;
+    // El título de la pista ("Latino", "Castellano"…) está en las líneas de metadatos que siguen.
+    const block = text.slice(match.index + whole.length, found[i + 1]?.index);
+    const title = block.match(/^\s+title\s*:\s*(.+)$/m)?.[1]?.trim() ?? null;
+
+    return { index: Number(index), lang: regional(iso(lang), title), title, kind: kind.toLowerCase(), codec, rest };
+  });
 
   return {
     video: streams.find((s) => s.kind === "video" && !/attached pic/.test(s.rest) && !["mjpeg", "png", "bmp"].includes(s.codec)),
@@ -423,13 +436,15 @@ const minutes = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.round(se
 // reemplaza (en una carpeta nueva: los segmentos viejos estan cacheados "para siempre").
 //
 // job: { malId, number, file, lang, offsetMs, track, log }
-//   track es la pista de audio del archivo que se usa, contando desde 1 (por defecto la primera).
+//   track es la pista de audio del archivo que se usa, contando desde 1. Sin ella se usa la que
+//   coincide con el idioma (por etiqueta o título, p. ej. "Latino") o, si no hay, la primera.
 //   offsetMs > 0 retrasa el audio, < 0 lo adelanta: para corregir un doblaje desfasado.
 const addAudio = async (ctx, job) => {
   const log = job.log ?? ((message) => console.log(`› ${message}`));
   const { malId, number, file, lang } = job;
   const offsetMs = Number(job.offsetMs) || 0;
-  const track = Number.isInteger(Number(job.track)) && Number(job.track) >= 1 ? Number(job.track) : 1;
+  // Sin pista indicada se elige sola: la del idioma pedido si el archivo la trae, o la primera.
+  const wanted = job.track != null && Number.isInteger(Number(job.track)) && Number(job.track) >= 1 ? Number(job.track) : null;
 
   const anime = await ctx.Anime.Anime.findOne({ where: { malId } });
   if (!anime) throw new Error(`No hay ningun anime con malId ${malId} en la base`);
@@ -466,6 +481,8 @@ const addAudio = async (ctx, job) => {
     // 2. Convertir el audio nuevo
     const info = await probe(file);
     if (!info.audio.length) throw new Error('El archivo no tiene ninguna pista de audio');
+    const guessed = info.audio.findIndex((s) => s.lang && sameLang(s.lang, lang));
+    const track = wanted ?? (guessed >= 0 ? guessed + 1 : 1);
     if (track > info.audio.length) {
       throw new Error(`El archivo tiene ${info.audio.length} ${info.audio.length === 1 ? 'pista de audio' : 'pistas de audio'} y se pidió la ${track}`);
     }
@@ -580,4 +597,4 @@ const generateThumbnail = async (ctx, job) => {
   }
 };
 
-module.exports = { createContext, closeContext, publishEpisode, addAudio, generateThumbnail, subtitleName, iso };
+module.exports = { createContext, closeContext, publishEpisode, addAudio, generateThumbnail, subtitleName, iso, probe };
