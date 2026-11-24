@@ -243,6 +243,57 @@ exports.uploadSubtitle = catchAsync(async (req, res) => {
   return res.status(201).send({ ...subtitle.toJSON(), cues: converted.cues });
 });
 
+// Edita una pista de subtitulos ya guardada: el nombre con el que se muestra, su idioma (con el que se
+// elige segun el perfil del usuario) y si es la predeterminada. No toca el archivo .vtt.
+exports.updateSubtitle = catchAsync(async (req, res) => {
+  const subtitle = await Anime.Subtitle.findByPk(req.params.id);
+
+  if (!subtitle) throw new AppError("Subtitle not found", 404);
+
+  const { label, language, default: makeDefault } = req.body ?? {};
+  const changes = {};
+
+  if (label !== undefined) {
+    const clean = String(label).trim();
+
+    if (!clean || clean.length > 60) throw new AppError("The name must have between 1 and 60 characters", 406);
+
+    changes.label = clean;
+  }
+
+  if (language !== undefined) {
+    const code = String(language).trim().toLowerCase();
+
+    if (!/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/.test(code)) throw new AppError("Language must be a code like es, en or es-419", 406);
+
+    if (code !== subtitle.language && await Anime.Subtitle.count({ where: { episodeId: subtitle.episodeId, language: code } })) {
+      throw new AppError("This episode already has subtitles in that language", 409);
+    }
+
+    changes.language = code;
+  }
+
+  if (makeDefault !== undefined) {
+    if (typeof makeDefault !== "boolean") throw new AppError("default must be true or false", 406);
+
+    // Una sola predeterminada por episodio.
+    if (makeDefault) await Anime.Subtitle.update({ default: false }, { where: { episodeId: subtitle.episodeId } });
+
+    changes.default = makeDefault;
+  }
+
+  if (!Object.keys(changes).length) throw new AppError("Nothing to update", 406);
+
+  await subtitle.update(changes);
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.SUBTITLE_UPDATE,
+    meta: { episodeId: subtitle.episodeId, subtitleId: subtitle.id, fields: Object.keys(changes) },
+  });
+
+  return res.status(200).send(subtitle);
+});
+
 exports.removeSubtitle = catchAsync(async (req, res) => {
   const subtitle = await Anime.Subtitle.findByPk(req.params.id);
 
@@ -414,7 +465,7 @@ const masterOf = async (episode) => {
 exports.listAudio = catchAsync(async (req, res) => {
   const { master } = await masterOf(req.episode);
 
-  const tracks = hls.audioTracks(master).map(({ dir, lang, name, isDefault }) => ({ dir, lang, name, default: isDefault }));
+  const tracks = hls.audioTracks(master).map((track) => ({ dir: track.dir, lang: track.lang, name: hls.customName(track), default: track.isDefault }));
 
   return res.status(200).send(tracks);
 });
@@ -449,6 +500,41 @@ exports.removeAudio = catchAsync(async (req, res) => {
   });
 
   return res.status(200).send({ message: "Audio removed", tracks: hls.audioTracks(patched.master).length });
+});
+
+// Cambia el nombre con el que se muestra un audio ("Español latino" en vez de lo que salga del código
+// de idioma). Solo toca el manifiesto: los segmentos y el idioma no cambian.
+exports.renameAudio = catchAsync(async (req, res) => {
+  const { dir } = req.params;
+  const name = req.body?.name ?? "";
+
+  if (!/^[A-Za-z0-9_-]+$/.test(dir)) throw new AppError("Invalid audio folder", 406);
+
+  if (typeof name !== "string" || name.trim().length > 40 || /["\u0000-\u001f]/.test(name)) {
+    throw new AppError("The name can have up to 40 characters, without quotes", 406);
+  }
+
+  const { cfg, prefix, master } = await masterOf(req.episode);
+
+  let patched;
+
+  try {
+    patched = hls.withAudioName(master, dir, name);
+  } catch (err) {
+    throw new AppError(err.message, 409);
+  }
+
+  await storage.put(cfg.bucket, `${prefix}master.m3u8`, patched, {
+    contentType: "application/vnd.apple.mpegurl",
+    cacheControl: "public, max-age=300",
+  });
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.AUDIO_UPDATE,
+    meta: { episodeId: req.episode.id, dir, name: name.trim() },
+  });
+
+  return res.status(200).send({ message: "Audio renamed", tracks: hls.audioTracks(patched).map((track) => ({ dir: track.dir, lang: track.lang, name: hls.customName(track), default: track.isDefault })) });
 });
 
 exports.defaultAudio = catchAsync(async (req, res) => {

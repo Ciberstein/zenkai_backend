@@ -27,6 +27,11 @@ const audioTracks = (master) =>
       };
     });
 
+const GENERIC = /^audio_\d+$/;
+
+// Nombre que el administrador le puso a la pista (el que se muestra en el reproductor), o null si es el genérico.
+const customName = (track) => (track?.name && !GENERIC.test(track.name) ? track.name : null);
+
 // Nombre de carpeta libre para una pista nueva. Con el codigo de idioma basta; si ya hay una
 // carpeta asi (se esta reemplazando esa pista) se usa otra distinta: los segmentos se cachean
 // "para siempre" (immutable) y sobrescribirlos dejaria a los espectadores con el audio viejo.
@@ -51,7 +56,7 @@ const withAudio = (master, { lang, dir }) => {
   const entry = [
     '#EXT-X-MEDIA:TYPE=AUDIO',
     `GROUP-ID="${tracks[0].group}"`,
-    `NAME="audio_${number}"`,
+    `NAME="${customName(replaced) ?? `audio_${number}`}"`,
     `DEFAULT=${replaced?.isDefault ? 'YES' : 'NO'}`,
     `LANGUAGE="${lang}"`,
     `URI="${dir}/index.m3u8"`,
@@ -101,6 +106,33 @@ const withDefaultAudio = (master, dir) => {
   return lines.join('\n');
 };
 
+// Manifiesto con el nombre que se muestra para el audio de la carpeta `dir`. NAME ha de ser único
+// dentro del grupo. Un nombre vacío devuelve el genérico (audio_N), con lo que el reproductor vuelve
+// a mostrar el idioma.
+const withAudioName = (master, dir, name) => {
+  const tracks = audioTracks(master);
+  const track = tracks.find((item) => item.dir === dir);
+
+  if (!track) throw new Error('Ese audio no existe en el episodio');
+
+  const clean = String(name ?? '').trim();
+  let value = clean;
+
+  if (!value) {
+    const taken = new Set(tracks.map((item) => item.name));
+    let n = 1;
+    while (taken.has(`audio_${n}`)) n += 1;
+    value = `audio_${n}`;
+  } else if (tracks.some((item) => item !== track && item.name?.toLowerCase() === value.toLowerCase())) {
+    throw new Error('Ya hay otro audio con ese nombre');
+  }
+
+  const lines = master.split(EOL);
+  lines[track.index] = lines[track.index].replace(/NAME="[^"]*"/, () => `NAME="${value}"`);
+
+  return lines.join('\n');
+};
+
 // Ruta de la lista de reproduccion del video (la linea que sigue a #EXT-X-STREAM-INF).
 const videoUri = (master) => {
   const lines = master.split(EOL);
@@ -113,4 +145,4 @@ const videoUri = (master) => {
 const duration = (playlist) =>
   [...playlist.matchAll(/#EXTINF:([\d.]+)/g)].reduce((sum, match) => sum + Number(match[1]), 0);
 
-module.exports = { audioTracks, freeDir, withAudio, withoutAudio, withDefaultAudio, videoUri, duration };
+module.exports = { audioTracks, customName, freeDir, withAudio, withoutAudio, withDefaultAudio, withAudioName, videoUri, duration };

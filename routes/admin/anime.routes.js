@@ -82,6 +82,10 @@ router.post("/episodes/:id/subtitles/upload",
   controllers.anime.uploadSubtitle,
 );
 
+router.patch("/subtitles/:id",
+  controllers.anime.updateSubtitle,
+);
+
 router.delete("/subtitles/:id",
   controllers.anime.removeSubtitle,
 );
@@ -106,6 +110,11 @@ router.get("/episodes/:id/audio",
 router.put("/episodes/:id/audio/:dir/default",
   middlewares.anime.episode,
   controllers.anime.defaultAudio,
+);
+
+router.patch("/episodes/:id/audio/:dir",
+  middlewares.anime.episode,
+  controllers.anime.renameAudio,
 );
 
 router.delete("/episodes/:id/audio/:dir",

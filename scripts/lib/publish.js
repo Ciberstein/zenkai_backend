@@ -36,7 +36,12 @@ const iso = (code) => {
   return ISO[value] ?? value;
 };
 
+// Códigos que no son ISO pero se usan en la práctica: "lat" es español latino, no latín.
+const ALIASES = { lat: "Español latino" };
+
 const languageName = (code) => {
+  if (ALIASES[String(code).toLowerCase()]) return ALIASES[String(code).toLowerCase()];
+
   try {
     const name = new Intl.DisplayNames(["es"], { type: "language" }).of(code);
     return name.charAt(0).toUpperCase() + name.slice(1);

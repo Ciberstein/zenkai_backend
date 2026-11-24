@@ -126,6 +126,8 @@ Each episode has **sources** (`anime.anime_sources`) and **subtitle tracks**
 | `POST /episodes/:id/subtitles` | `{ language, label, url, default }` — a WebVTT (`.vtt`) file already hosted somewhere |
 | `POST /episodes/:id/subtitles/upload?language=&label=&filename=&default=` | The body is the subtitle file itself (`application/octet-stream`, up to 5 MB): `.ass`, `.ssa`, `.srt` or `.vtt` |
 | `POST /episodes/:id/audio-uploads` | `{ filename, size, language, offset }` — queue an extra audio (another dub) for an episode already published as HLS; returns a signed URL to upload it, then call `POST /uploads/:id/complete` |
+| `PATCH /episodes/:id/audio/:dir` | `{ name }` — set the name an audio track is shown with (`Español latino`); up to 40 characters, unique within the episode; an empty name goes back to the language's name. Only the manifest changes |
+| `PATCH /subtitles/:id` | `{ label?, language?, default? }` — edit how a subtitle track is shown (up to 60 characters), its language code (unique per episode) or make it the default (only one per episode). The `.vtt` file is not touched |
 | `DELETE /subtitles/:id` | Remove a subtitle track |
 | `PUT /episodes/:id/segments/:type` | `{ start, end }` in seconds — set an intro / outro / recap by hand (`type` = `intro`, `outro` or `recap`); manual always wins |
 | `DELETE /episodes/:id/segments/:type` | Remove a segment |
