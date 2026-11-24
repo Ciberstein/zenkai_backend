@@ -36,19 +36,16 @@ const iso = (code) => {
   return ISO[value] ?? value;
 };
 
-// Códigos que no son ISO pero se usan en la práctica: "lat" es español latino, no latín.
-const ALIASES = {
-  es: "Español (España)",
-  "es-es": "Español (España)",
-  lat: "Español (Latinoamérica)",
-  "es-419": "Español (Latinoamérica)",
-};
+// Nombre con el que se etiqueta una pista de subtítulos: el idioma sin región. "Español" ya cubre
+// es, es-419, es-ES o lat (los subtítulos no cambian de una variante a otra como un doblaje).
+const SUBTITLE_BASE = { lat: "es" };
 
-const languageName = (code) => {
-  if (ALIASES[String(code).toLowerCase()]) return ALIASES[String(code).toLowerCase()];
+const subtitleName = (code) => {
+  const lower = String(code).toLowerCase();
+  const base = SUBTITLE_BASE[lower] ?? lower.split("-")[0];
 
   try {
-    const name = new Intl.DisplayNames(["es"], { type: "language" }).of(code);
+    const name = new Intl.DisplayNames(["es"], { type: "language" }).of(base);
     return name.charAt(0).toUpperCase() + name.slice(1);
   } catch {
     return code;
@@ -321,7 +318,7 @@ const register = async (ctx, episode, job, subs, urls) => {
     await Anime.Subtitle.create({
       episodeId: episode.id,
       language: sub.lang,
-      label: languageName(sub.lang),
+      label: subtitleName(sub.lang),
       url: `${urls.base}subs/${sub.lang}.vtt`,
       default: sub.lang === defaultLang,
     });
@@ -578,4 +575,4 @@ const generateThumbnail = async (ctx, job) => {
   }
 };
 
-module.exports = { createContext, closeContext, publishEpisode, addAudio, generateThumbnail, languageName, iso };
+module.exports = { createContext, closeContext, publishEpisode, addAudio, generateThumbnail, subtitleName, iso };
