@@ -65,7 +65,7 @@ exports.subtitle = catchAsync(async (req, _, next) => {
 const VIDEO_EXT = [".mkv", ".mp4", ".m4v", ".mov", ".avi", ".webm", ".ts"];
 const AUDIO_EXT = [".m4a", ".aac", ".mka", ".mp3", ".flac", ".wav", ".ac3", ".opus", ".ogg"];
 const SUB_EXT = [".srt", ".ass", ".ssa", ".vtt"];
-const MAX_BYTES = 5 * 1024 ** 3; // limite de una sola subida a R2
+const MAX_BYTES = 50 * 1024 ** 3; // lo que pasa de ~1 GB se sube en partes (multipart)
 const MAX_EXTRAS = 30;
 const LANG = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/;
 
@@ -80,7 +80,7 @@ exports.uploadRequest = catchAsync(async (req, _, next) => {
   }
 
   if (!Number.isInteger(size) || size <= 0 || size > MAX_BYTES) {
-    return next(new AppError("Video size must be between 1 byte and 5 GB", 406));
+    return next(new AppError("Video size must be between 1 byte and 50 GB", 406));
   }
 
   if (!Array.isArray(extras) || extras.length > MAX_EXTRAS) {
@@ -99,7 +99,7 @@ exports.uploadRequest = catchAsync(async (req, _, next) => {
     }
 
     if (!Number.isInteger(extra.size) || extra.size <= 0 || extra.size > MAX_BYTES) {
-      return next(new AppError("Extra size must be between 1 byte and 5 GB", 406));
+      return next(new AppError("Extra size must be between 1 byte and 50 GB", 406));
     }
   }
 
@@ -169,7 +169,7 @@ exports.audioRequest = catchAsync(async (req, _, next) => {
   }
 
   if (!Number.isInteger(size) || size <= 0 || size > MAX_BYTES) {
-    return next(new AppError("File size must be between 1 byte and 5 GB", 406));
+    return next(new AppError("File size must be between 1 byte and 50 GB", 406));
   }
 
   if (!LANG.test(language ?? "")) {

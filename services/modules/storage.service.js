@@ -4,6 +4,7 @@ const fs = require("fs");
 const { pipeline } = require("stream/promises");
 const {
   S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV2Command, DeleteObjectsCommand,
+  CreateMultipartUploadCommand, UploadPartCommand, ListPartsCommand, CompleteMultipartUploadCommand, AbortMultipartUploadCommand,
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
@@ -62,6 +63,46 @@ const client = () => {
 const presignPut = (bucket, key, expiresIn = 6 * 3600) =>
   getSignedUrl(client(), new PutObjectCommand({ Bucket: bucket, Key: key }), { expiresIn });
 
+// Subida en partes (multipart), para archivos que no caben en un solo PUT (R2 admite 5 GB por PUT).
+// El navegador sube cada parte con su URL firmada; no hace falta que lea el ETag de la respuesta
+// (eso exigiria exponerlo por CORS): al terminar, el servidor lo pide con ListParts.
+const MIN_PART = 5 * 1024 ** 2;
+const MAX_PARTS = 10000;
+
+// Tamano de parte para un archivo: 128 MB, o mas si con eso pasaria de 10000 partes.
+const partSizeFor = (size) => Math.max(128 * 1024 ** 2, Math.ceil(size / (MAX_PARTS - 1)), MIN_PART);
+
+const createMultipart = async (bucket, key) => {
+  const { UploadId } = await client().send(new CreateMultipartUploadCommand({ Bucket: bucket, Key: key }));
+  return UploadId;
+};
+
+const presignPart = (bucket, key, uploadId, partNumber, expiresIn = 12 * 3600) =>
+  getSignedUrl(client(), new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber }), { expiresIn });
+
+// Cierra la subida en partes. Devuelve false si faltan partes (no se ha terminado de subir).
+const completeMultipart = async (bucket, key, uploadId, expectedParts) => {
+  const parts = [];
+  let marker;
+
+  do {
+    const page = await client().send(new ListPartsCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumberMarker: marker }));
+    parts.push(...(page.Parts ?? []).map((part) => ({ PartNumber: part.PartNumber, ETag: part.ETag })));
+    marker = page.IsTruncated ? page.NextPartNumberMarker : undefined;
+  } while (marker);
+
+  if (parts.length !== expectedParts) return false;
+
+  await client().send(new CompleteMultipartUploadCommand({
+    Bucket: bucket, Key: key, UploadId: uploadId, MultipartUpload: { Parts: parts },
+  }));
+
+  return true;
+};
+
+const abortMultipart = (bucket, key, uploadId) =>
+  client().send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId: uploadId }));
+
 // Sube un objeto pequeno (un subtitulo, por ejemplo) desde la propia API.
 const put = (bucket, key, body, { contentType, cacheControl } = {}) =>
   client().send(new PutObjectCommand({
@@ -112,4 +153,7 @@ const removePrefix = async (bucket, prefix) => {
   } while (token);
 };
 
-module.exports = { config, missing, client, presignPut, put, sizeOf, read, download, remove, removePrefix };
+module.exports = {
+  config, missing, client, presignPut, partSizeFor, createMultipart, presignPart, completeMultipart, abortMultipart,
+  put, sizeOf, read, download, remove, removePrefix,
+};

@@ -108,8 +108,9 @@ const withDefaultAudio = (master, dir) => {
 
 // Manifiesto con el nombre que se muestra para el audio de la carpeta `dir`. NAME ha de ser único
 // dentro del grupo. Un nombre vacío devuelve el genérico (audio_N), con lo que el reproductor vuelve
-// a mostrar el idioma.
-const withAudioName = (master, dir, name) => {
+// a mostrar el idioma. Si se pasa `lang`, también cambia el código de idioma de la pista (no puede
+// coincidir con el de otra pista: el reproductor las elige por idioma).
+const withAudioName = (master, dir, name, lang = null) => {
   const tracks = audioTracks(master);
   const track = tracks.find((item) => item.dir === dir);
 
@@ -127,8 +128,16 @@ const withAudioName = (master, dir, name) => {
     throw new Error('Ya hay otro audio con ese nombre');
   }
 
+  const code = lang ? String(lang).trim() : null;
+
+  if (code && tracks.some((item) => item !== track && item.lang?.toLowerCase() === code.toLowerCase())) {
+    throw new Error('Ya hay otro audio con ese idioma');
+  }
+
   const lines = master.split(EOL);
   lines[track.index] = lines[track.index].replace(/NAME="[^"]*"/, () => `NAME="${value}"`);
+
+  if (code) lines[track.index] = lines[track.index].replace(/LANGUAGE="[^"]*"/, () => `LANGUAGE="${code}"`);
 
   return lines.join('\n');
 };

@@ -29,6 +29,7 @@ const POLL_MS = Math.max(2, Number(process.env.WORKER_POLL_SECONDS) || 10) * 100
 const HEARTBEAT_MS = 30 * 1000;
 const ORPHAN_MS = 3 * 60 * 1000;
 const HOUSEKEEPING_MS = 60 * 60 * 1000;
+const ORPHAN_CHECK_MS = 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -36,6 +37,7 @@ const log = (message) => console.log(`[${new Date().toLocaleTimeString("es")}] $
 
 let stopping = false;
 let current = null;
+let workDir = null;   // carpeta temporal del trabajo en curso: se borra al cerrar
 
 // Toma el trabajo en cola mas antiguo. SKIP LOCKED evita que dos workers cojan el mismo.
 const claim = () => db.transaction(async (transaction) => {
@@ -74,6 +76,7 @@ const handle = async (ctx, upload) => {
   }, HEARTBEAT_MS);
 
   current = upload;
+  workDir = dir;
 
   try {
     const episode = await Anime.Episode.findByPk(upload.episodeId, {
@@ -141,6 +144,7 @@ const handle = async (ctx, upload) => {
   } finally {
     clearInterval(beat);
     current = null;
+    workDir = null;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 };
@@ -191,6 +195,9 @@ const shutdown = async (signal) => {
     ).catch(() => {});
   }
 
+  // process.exit no ejecuta el finally de handle: sin esto el disco guardaria los gigas a medio descargar.
+  if (workDir) fs.rmSync(workDir, { recursive: true, force: true });
+
   await db.close().catch(() => {});
   process.exit(0);
 };
@@ -213,15 +220,22 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
   log(`Worker listo: busco videos en cola cada ${POLL_MS / 1000} s`);
 
   let lastHousekeeping = 0;
+  let lastOrphans = 0;
 
   while (!stopping) {
     try {
       // El esquema lo crea la API al arrancar; si todavia no existe, se reintenta.
       await Anime.Upload.sync();
 
+      // Los huerfanos se buscan cada minuto: tras un corte brusco (SIGKILL) el trabajo no puede
+      // quedarse una hora parado como `processing`. La limpieza pesada va de hora en hora.
+      if (Date.now() - lastOrphans > ORPHAN_CHECK_MS) {
+        lastOrphans = Date.now();
+        await requeueOrphans();
+      }
+
       if (Date.now() - lastHousekeeping > HOUSEKEEPING_MS) {
         lastHousekeeping = Date.now();
-        await requeueOrphans();
         await housekeeping();
       }
 

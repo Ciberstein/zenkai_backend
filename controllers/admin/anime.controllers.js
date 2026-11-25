@@ -30,6 +30,13 @@ exports.list = catchAsync(async (req, res) => {
   return res.status(200).send({ data: rows, pagination: meta({ page, limit, count }) });
 });
 
+// Datos basicos de un anime del catalogo (la pagina de episodios muestra su nombre).
+exports.show = catchAsync(async (req, res) => {
+  const { id, malId, title, titleEnglish } = req.anime;
+
+  return res.status(200).send({ id, malId, title, titleEnglish });
+});
+
 // Trae un titulo desde la API oficial a nuestro catalogo. Se puede repetir sin
 // riesgo: refresca la fila existente en vez de fallar por el malId unico.
 exports.sync = catchAsync(async (req, res, next) => {
@@ -328,11 +335,37 @@ const keysOf = (upload) => upload.files.map((file) => file.key);
 
 const discard = async (upload) => {
   const { uploadBucket } = storage.config();
+
+  // Una subida en partes sin cerrar deja partes sueltas en el bucket: se abortan.
+  await Promise.all(upload.files
+    .filter((file) => file.multipartId)
+    .map((file) => storage.abortMultipart(uploadBucket, file.key, file.multipartId).catch(() => {})));
+
   await storage.remove(uploadBucket, keysOf(upload)).catch(() => {});
   await upload.destroy();
 };
 
 const extOf = (name) => (name.toLowerCase().match(/\.[a-z0-9]+$/) ?? [""])[0];
+
+// Un PUT a R2 admite hasta 5 GB, pero uno tan grande es fragil (un corte a mitad lo pierde todo).
+// Desde 1 GB se sube en partes: el navegador las envia en paralelo y reintenta solo la que falle.
+const MULTIPART_FROM = 1024 ** 3;
+
+// Prepara la subida de un archivo: una URL firmada, o varias (una por parte) si es grande.
+// Anota en `file` lo necesario para cerrarla despues (multipartId, partSize, parts).
+const prepare = async (cfg, file) => {
+  if (file.size < MULTIPART_FROM) return { url: await storage.presignPut(cfg.uploadBucket, file.key) };
+
+  const partSize = storage.partSizeFor(file.size);
+  const count = Math.ceil(file.size / partSize);
+  const uploadId = await storage.createMultipart(cfg.uploadBucket, file.key);
+
+  Object.assign(file, { multipartId: uploadId, partSize, parts: count });
+
+  const parts = await Promise.all(Array.from({ length: count }, (_, i) => storage.presignPart(cfg.uploadBucket, file.key, uploadId, i + 1)));
+
+  return { parts, partSize };
+};
 
 // Un episodio solo admite una subida a la vez. Una a medias que lleva media hora sin tocarse se da
 // por abandonada (cerraron la pestana): no debe bloquearlo para siempre.
@@ -383,7 +416,10 @@ exports.createUpload = catchAsync(async (req, res) => {
 
   await upload.update({ files });
 
-  const urls = await Promise.all(files.map((file) => storage.presignPut(cfg.uploadBucket, file.key)));
+  const targets = await Promise.all(files.map((file) => prepare(cfg, file)));
+
+  // prepare() anota en cada archivo su subida en partes: se guarda para poder cerrarla.
+  await upload.update({ files });
 
   services.logger.fromRequest(req, {
     action: LOG_ACTIONS.UPLOAD_CREATE,
@@ -392,7 +428,7 @@ exports.createUpload = catchAsync(async (req, res) => {
 
   return res.status(201).send({
     id: upload.id,
-    files: files.map((file, index) => ({ kind: file.kind, lang: file.lang, name: file.name, url: urls[index] })),
+    files: files.map((file, index) => ({ kind: file.kind, lang: file.lang, name: file.name, ...targets[index] })),
   });
 });
 
@@ -419,21 +455,23 @@ exports.createAudioUpload = catchAsync(async (req, res) => {
   const token = crypto.randomUUID();
   const key = `incoming/${token}/audio-${language}${extOf(filename)}`;
 
+  const file = { kind: "audio", lang: language, name: filename, size, key };
   const upload = await Anime.Upload.create({
     episodeId: req.episode.id,
     accountId: req.sessionAccount?.id ?? null,
     options: { kind: "audio", offset, track },
-    files: [{ kind: "audio", lang: language, name: filename, size, key }],
+    files: [file],
   });
 
-  const url = await storage.presignPut(cfg.uploadBucket, key);
+  const target = await prepare(cfg, file);
+  await upload.update({ files: [file] });
 
   services.logger.fromRequest(req, {
     action: LOG_ACTIONS.UPLOAD_CREATE,
     meta: { episodeId: req.episode.id, uploadId: upload.id, kind: "audio", language },
   });
 
-  return res.status(201).send({ id: upload.id, files: [{ kind: "audio", lang: language, name: filename, url }] });
+  return res.status(201).send({ id: upload.id, files: [{ kind: "audio", lang: language, name: filename, ...target }] });
 });
 
 // Audios del episodio publicado, leidos de su manifiesto (master.m3u8) en el bucket.
@@ -503,10 +541,12 @@ exports.removeAudio = catchAsync(async (req, res) => {
 });
 
 // Cambia el nombre con el que se muestra un audio ("Español latino" en vez de lo que salga del código
-// de idioma). Solo toca el manifiesto: los segmentos y el idioma no cambian.
+// de idioma) y, si se envía `lang`, también su código de idioma. Solo toca el manifiesto: los
+// segmentos no cambian.
 exports.renameAudio = catchAsync(async (req, res) => {
   const { dir } = req.params;
   const name = req.body?.name ?? "";
+  const lang = req.body?.lang ?? null;
 
   if (!/^[A-Za-z0-9_-]+$/.test(dir)) throw new AppError("Invalid audio folder", 406);
 
@@ -514,12 +554,16 @@ exports.renameAudio = catchAsync(async (req, res) => {
     throw new AppError("The name can have up to 40 characters, without quotes", 406);
   }
 
+  if (lang !== null && (typeof lang !== "string" || !/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(lang.trim()))) {
+    throw new AppError("Invalid language code (e.g. es, ja, es-419)", 406);
+  }
+
   const { cfg, prefix, master } = await masterOf(req.episode);
 
   let patched;
 
   try {
-    patched = hls.withAudioName(master, dir, name);
+    patched = hls.withAudioName(master, dir, name, lang);
   } catch (err) {
     throw new AppError(err.message, 409);
   }
@@ -531,7 +575,7 @@ exports.renameAudio = catchAsync(async (req, res) => {
 
   services.logger.fromRequest(req, {
     action: LOG_ACTIONS.AUDIO_UPDATE,
-    meta: { episodeId: req.episode.id, dir, name: name.trim() },
+    meta: { episodeId: req.episode.id, dir, name: name.trim(), ...(lang ? { lang: lang.trim() } : {}) },
   });
 
   return res.status(200).send({ message: "Audio renamed", tracks: hls.audioTracks(patched).map((track) => ({ dir: track.dir, lang: track.lang, name: hls.customName(track), default: track.isDefault })) });
@@ -639,6 +683,24 @@ exports.completeUpload = catchAsync(async (req, res) => {
   }
 
   const { uploadBucket } = storage.config();
+
+  // Las subidas en partes se cierran aqui: si falta alguna parte, el archivo no esta completo.
+  const files = upload.files.map((file) => ({ ...file }));
+
+  for (const file of files.filter((item) => item.multipartId)) {
+    const closed = await storage.completeMultipart(uploadBucket, file.key, file.multipartId, file.parts)
+      .catch((err) => {
+        // Cerrada ya en un intento anterior (se perdio la respuesta): el tamano de abajo la valida.
+        if (err.name === "NoSuchUpload") return true;
+        throw err;
+      });
+
+    if (!closed) throw new AppError(`${file.name} did not finish uploading (some parts are missing)`, 409);
+
+    delete file.multipartId;
+  }
+
+  await upload.update({ files });
 
   // Que lo subido sea de verdad lo que se anuncio: un corte de red a medias
   // dejaria un video truncado que el worker intentaria convertir.

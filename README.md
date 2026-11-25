@@ -205,9 +205,12 @@ browser ──PUT (signed URL)──▶ incoming/<token>/ ──▶ worker ─�
 1. `POST /api/v1/admin/anime/episodes/:id/uploads` validates the request, creates the job
    and returns one **signed URL per file**. The browser uploads straight to the bucket
    (under `incoming/<random token>/`), so large videos never go through the API (one file
-   up to 5 GB, no resume).
-2. `POST /uploads/:id/complete` checks that every file arrived with its announced size
-   and queues the job.
+   up to 50 GB; from 1 GB on the file is sent as a **multipart upload**: the API returns one signed URL
+   per 128 MB part, the browser sends 4 at a time and retries each part up to 3 times).
+2. `POST /uploads/:id/complete` closes the multipart uploads (lists their parts and completes them),
+   checks that every file arrived with its announced size and queues the job. Discarding an
+   unfinished upload aborts its multipart upload. Note that the worker downloads the whole
+   original to its disk to convert it, so very large files need that much free space there.
 3. The **worker** (`npm run worker`) takes queued jobs, downloads the originals, runs the
    same conversion as `publish:episode`, publishes, registers the source and subtitles,
    and deletes the originals. The episode row shows *En cola → Convirtiendo → Publicado*

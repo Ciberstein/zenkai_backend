@@ -20,6 +20,11 @@ router.post("/sync/:malId",
   controllers.anime.sync,
 );
 
+router.get("/:id",
+  middlewares.anime.anime,
+  controllers.anime.show,
+);
+
 router.patch("/:id",
   middlewares.anime.anime,
   controllers.anime.update,
