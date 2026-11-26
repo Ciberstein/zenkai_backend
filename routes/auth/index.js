@@ -61,6 +61,28 @@ router.post("/login",
   controllers.accounts.login,
 );
 
+// Vincular una TV: la TV pide un codigo y lo consulta; el celular (con sesion) lo autoriza.
+const tvLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.AUTH_TV_LIMIT) || 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: "error", message: "Too many requests, try again in a few minutes" },
+});
+
+// La TV consulta cada pocos segundos mientras espera: ventana propia y mas holgada.
+const pollLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { status: "error", message: "Too many requests, slow down" },
+});
+
+router.post("/tv/code", tvLimiter, controllers.accounts.tvCode);
+router.post("/tv/poll", pollLimiter, controllers.accounts.tvPoll);
+router.post("/tv/approve", tvLimiter, middlewares.auth.protect, controllers.accounts.tvApprove);
+
 router.post("/logout",
   controllers.accounts.logout,
 );

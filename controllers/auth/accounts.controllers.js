@@ -194,3 +194,56 @@ exports.validate = catchAsync(async (req, res, next) => {
 
   return res.status(200).send({ auth: Boolean(req.sessionAccount) });
 });
+
+// ─── Vincular una TV con el celular ──────────────────────────────────────────
+
+// La TV pide un codigo (que muestra y mete en un QR) y un secreto que solo ella conoce.
+exports.tvCode = catchAsync(async (req, res) => {
+  const { code, secret, expiresIn } = await services.pairing.create();
+
+  return res.status(201).send({ code, secret, expiresIn });
+});
+
+// La TV pregunta si ya la autorizaron. Al estarlo recibe las cookies de sesion, igual que en el login.
+exports.tvPoll = catchAsync(async (req, res) => {
+  const result = await services.pairing.poll(req.body?.secret);
+
+  if (result.status !== "approved") return res.status(200).send({ status: result.status });
+
+  const account = await Accounts.Account.findOne({
+    where: { id: result.accountId },
+    attributes: ["id", "email", "username", "authority", "status", "verified"],
+    include: [{ model: Profile.Profiles, as: "profile" }],
+  });
+
+  if (!account || account.status === "banned") {
+    return res.status(200).send({ status: "expired" });
+  }
+
+  await account.update({ lastLogin: new Date() });
+  await services.auth.issue(res, account, meta(req));
+
+  services.logger.write({
+    actorId: account.id,
+    action: LOG_ACTIONS.ACCOUNT_LOGIN,
+    ip: req.ip,
+  });
+
+  return res.status(200).send({
+    status: "approved",
+    id: account.id,
+    email: account.email,
+    username: account.username,
+    authority: account.authority,
+    profile: account.profile,
+  });
+});
+
+// El usuario, ya con sesion en su celular, autoriza el codigo que ve en la TV.
+exports.tvApprove = catchAsync(async (req, res, next) => {
+  const ok = await services.pairing.approve(req.body?.code, req.sessionAccount.id);
+
+  if (!ok) return next(new AppError(`That code is invalid or has expired`, 404));
+
+  return res.status(200).send({ message: "TV linked" });
+});
