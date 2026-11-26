@@ -426,7 +426,9 @@ exports.createUpload = catchAsync(async (req, res) => {
     })),
   ];
 
-  await upload.update({ files });
+  // Una copia: prepare() anota cosas en los objetos de `files`, y si se guardara la misma referencia
+  // Sequelize no vería diferencia al guardar de nuevo y no persistiría la subida en partes.
+  await upload.update({ files: structuredClone(files) });
 
   const targets = await Promise.all(files.map((file) => prepare(cfg, file)));
 
@@ -472,7 +474,7 @@ exports.createAudioUpload = catchAsync(async (req, res) => {
     episodeId: req.episode.id,
     accountId: req.sessionAccount?.id ?? null,
     options: { kind: "audio", offset, track },
-    files: [file],
+    files: [structuredClone(file)],
   });
 
   const target = await prepare(cfg, file);
