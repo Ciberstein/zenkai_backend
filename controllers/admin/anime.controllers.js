@@ -341,6 +341,7 @@ exports.removeSubtitle = catchAsync(async (req, res) => {
 
 const ACTIVE = ["uploading", "queued", "processing"];
 const ABANDONED_MS = 30 * 60 * 1000;
+const STALE_PROCESSING_MS = 3 * 60 * 1000;
 
 const keysOf = (upload) => upload.files.map((file) => file.key);
 
@@ -739,7 +740,9 @@ exports.retryUpload = catchAsync(async (req, res) => {
 });
 
 exports.removeUpload = catchAsync(async (req, res) => {
-  if (req.upload.status === "processing") {
+  // Convirtiendose de verdad (el worker avisa cada 30 s): no se toca. Sin avisos hace rato es que el
+  // worker murio: se puede cancelar para desbloquear el episodio.
+  if (req.upload.status === "processing" && Date.now() - req.upload.updatedAt.getTime() < STALE_PROCESSING_MS) {
     throw new AppError("The video is being converted; wait for it to finish", 409);
   }
 
