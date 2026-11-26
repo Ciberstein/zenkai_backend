@@ -6,7 +6,7 @@ const LOG_ACTIONS = require("../../utils/log.actions");
 const { paginate, meta } = require("../../utils/pagination.util");
 const { fromMal, genresFromMal, episodesFromJikan } = require("../../utils/anime.util");
 const crypto = require("crypto");
-const { Op } = require("sequelize");
+const { Op, literal } = require("sequelize");
 const storage = require("../../services/modules/storage.service");
 const { toVtt } = require("../../utils/subtitle.util");
 const hls = require("../../utils/hls.util");
@@ -20,6 +20,17 @@ exports.list = catchAsync(async (req, res) => {
 
   const { count, rows } = await Anime.Anime.findAndCountAll({
     where: q ? { title: { [Op.iLike]: `%${q}%` } } : {},
+    attributes: {
+      include: [
+        // Capitulos con al menos un video activo (los que ya se pueden ver).
+        [
+          literal(
+            `(SELECT COUNT(*) FROM anime.anime_episodes e WHERE e."animeId" = "anime_anime"."id" AND EXISTS (SELECT 1 FROM anime.anime_sources s WHERE s."episodeId" = e."id" AND s."active" = true))`
+          ),
+          "loadedEpisodes",
+        ],
+      ],
+    },
     include: [{ model: Anime.Genre, as: "genres", attributes: ["id", "name"], through: { attributes: [] } }],
     order: [["createdAt", "DESC"]],
     distinct: true,
