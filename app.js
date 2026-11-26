@@ -10,6 +10,9 @@ const http = require('http');
 const app = express();
 
 const server = http.createServer(app);
+
+// Ver juntos (WebSocket): comparte el servidor HTTP, asi que usa el mismo puerto.
+require("./services/modules/party.service").attach(server);
 const router = express.Router();
 
 // CONTROLLERS //

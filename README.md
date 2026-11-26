@@ -404,6 +404,22 @@ which takes much longer. Files land under `anime/<malId>/<episode>/`. To publish
 production, run it with the production database credentials (for example
 `railway run npm run publish:episode -- ...` using the database's public URL).
 
+## Watch together (watch party)
+
+Rooms to watch an episode in sync, with a text chat. It is a WebSocket (socket.io, same HTTP server and port as
+the API, default path `/socket.io`) implemented in `services/modules/party.service.js`.
+
+- The player URL carries the room: `/watch/<malId>/<number>?party=<CODE>`. The "Ver juntos" button in the
+  player creates a room and gives the link to share; anyone who opens it (logged in) joins.
+- Every viewer plays their own stream: only the room state (playing, position) and the chat travel over the
+  socket. Anyone can play, pause or seek; only the host (first member, then the oldest) changes episode.
+- The session is the same `zk_access` cookie. The handshake checks the `Origin` against the CORS config
+  (the browser does not apply CORS to WebSockets and the auth is cookie based).
+- Rooms live **in memory of one API instance** and are lost on restart. With several instances you would need
+  the socket.io Redis adapter and the state in Redis. A room with nobody in it is removed after 2 minutes;
+  reloading the page does not drop anyone (10 s grace).
+- Limits: 50 members per room, chat messages of up to 300 characters (one every 400 ms), the last 50 are kept.
+
 ## Catalog sync
 
 The public catalog is served from Postgres. The upstream APIs only feed the mirror.
