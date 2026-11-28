@@ -35,6 +35,11 @@ router.get("/:id/episodes",
   controllers.anime.episodes,
 );
 
+router.post("/:id/episodes",
+  middlewares.anime.anime,
+  controllers.anime.createEpisode,
+);
+
 router.post("/:id/episodes/sync",
   middlewares.anime.anime,
   controllers.anime.syncEpisodes,

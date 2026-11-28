@@ -108,6 +108,30 @@ exports.syncEpisodes = catchAsync(async (req, res) => {
   return res.status(200).send({ synced: collected.length });
 });
 
+// Ficha de un episodio a mano: Jikan a veces no lista todos (p. ej. especiales de dos partes).
+exports.createEpisode = catchAsync(async (req, res) => {
+  const { anime } = req;
+  const number = Number(req.body.number);
+  const title = String(req.body.title ?? "").trim() || null;
+  const aired = req.body.aired ? new Date(req.body.aired) : null;
+
+  if (!Number.isInteger(number) || number < 1) throw new AppError("Episode number must be a positive integer", 400);
+  if (aired && Number.isNaN(aired.getTime())) throw new AppError("Invalid air date", 400);
+
+  if (await Anime.Episode.count({ where: { animeId: anime.id, number } })) {
+    throw new AppError("This anime already has that episode", 409);
+  }
+
+  const episode = await Anime.Episode.create({ animeId: anime.id, number, title, aired });
+
+  services.logger.fromRequest(req, {
+    action: LOG_ACTIONS.EPISODE_CREATE,
+    meta: { malId: anime.malId, episodeId: episode.id, number },
+  });
+
+  return res.status(201).send(episode);
+});
+
 exports.update = catchAsync(async (req, res) => {
   const FIELDS = ["title", "synopsis", "banner", "trailer", "featured", "visible"];
 
