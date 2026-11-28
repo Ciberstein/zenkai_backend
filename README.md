@@ -234,6 +234,13 @@ Setup:
    ```json
    [{"AllowedOrigins":["https://your-frontend.example.com"],"AllowedMethods":["GET","HEAD","PUT"],"AllowedHeaders":["*"],"MaxAgeSeconds":3600}]
    ```
+   To **cast to a TV (Google Cast)** the Chromecast receiver downloads the video itself from
+   `https://www.gstatic.com`, so it also needs a read-only rule open to any origin (the files are
+   public anyway); `PUT` stays limited to your frontend:
+   ```json
+   [{"AllowedOrigins":["https://your-frontend.example.com"],"AllowedMethods":["GET","HEAD","PUT"],"AllowedHeaders":["*"],"MaxAgeSeconds":3600},
+    {"AllowedOrigins":["*"],"AllowedMethods":["GET","HEAD"],"AllowedHeaders":["*"],"MaxAgeSeconds":3600}]
+   ```
 3. **API service on Railway:** add `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
    `R2_SECRET_ACCESS_KEY` and `R2_BUCKET`. (Without them the upload endpoint answers
    `503 Uploads are not configured`.)
