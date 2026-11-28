@@ -33,7 +33,12 @@ const ISO = {
 // Los doblajes latinos suelen venir etiquetados "spa" con "Latino" en el título de la pista:
 // se reconocen como es-419 para que no se confundan con el español de España.
 const LATAM = /\b(lat|latino|latam|latinoam[eé]rica|es-?419)/i;
-const regional = (lang, title) => (lang === "es" && LATAM.test(title ?? "") ? "es-419" : lang);
+const CASTILIAN = /\b(castellano|espa[nñ]a|spain|es-?es)\b/i;
+const regional = (lang, title) => {
+  if (lang !== "es") return lang;
+  if (LATAM.test(title ?? "")) return "es-419";
+  return CASTILIAN.test(title ?? "") ? "es-es" : lang;
+};
 const sameLang = (a, b) => String(a).toLowerCase().replace(/^lat$/, "es-419") === String(b).toLowerCase().replace(/^lat$/, "es-419");
 
 const iso = (code) => {
@@ -61,6 +66,13 @@ const subtitleName = (code) => {
   } catch {
     return code;
   }
+};
+
+// Nombre de una pista incrustada: el titulo que le puso quien la hizo ("Español [Crunchyroll]"), sin
+// el "Sub" del principio. Sin titulo, el del idioma.
+const embeddedLabel = (track) => {
+  const clean = String(track.title ?? "").replace(/^sub(t[ií]tulos?)?\s*[-:]?\s*/i, "").trim();
+  return clean || subtitleName(track.lang);
 };
 
 // ─── Contexto ─────────────────────────────────────────────────────────────────
@@ -232,16 +244,28 @@ const convert = async (out, job, log) => {
   // Subtitulos: WebVTT, uno por idioma. Lo suelto manda sobre lo incrustado.
   fs.mkdirSync(path.join(out, "subs"), { recursive: true });
 
+  // Una pista puede repetir idioma (varias traducciones al espanol de distintos grupos): el archivo
+  // lleva un nombre propio y el idioma sigue siendo el real. `name` es el nombre del archivo y
+  // `label` lo que ve el usuario (por defecto, el del idioma).
   const subs = [];
-  const add = (lang) => subs.push({ lang });
+  const taken = new Set();
+
+  const fileName = (lang) => {
+    let name = lang;
+    for (let n = 2; taken.has(name); n += 1) name = `${lang}-${n}`;
+    taken.add(name);
+    return name;
+  };
+
+  const add = (lang, extra = {}) => subs.push({ lang, name: fileName(lang), ...extra });
 
   for (const sub of job.subs ?? []) {
-    const target = path.join(out, "subs", `${sub.lang}.vtt`);
+    const entry = add(sub.lang);
+    const target = path.join(out, "subs", `${entry.name}.vtt`);
 
     if (sub.file.toLowerCase().endsWith(".vtt")) fs.copyFileSync(sub.file, target);
     else await ffmpeg(["-y", "-hide_banner", "-loglevel", "error", "-i", sub.file, target]);
 
-    add(sub.lang);
     log(`Subtitulos ${sub.lang} (archivo suelto)`);
   }
 
@@ -256,12 +280,13 @@ const convert = async (out, job, log) => {
       continue;
     }
 
-    if (subs.some((sub) => sub.lang === s.lang)) continue;
+    // Lo suelto de un idioma sustituye a lo incrustado de ese idioma.
+    if ((job.subs ?? []).some((sub) => sub.lang === s.lang)) continue;
 
-    await ffmpeg(["-y", "-hide_banner", "-loglevel", "error", "-i", job.video, "-map", `0:${s.index}`, "-c:s", "webvtt", path.join(out, "subs", `${s.lang}.vtt`)]);
+    const entry = add(s.lang, { label: embeddedLabel(s) });
+    await ffmpeg(["-y", "-hide_banner", "-loglevel", "error", "-i", job.video, "-map", `0:${s.index}`, "-c:s", "webvtt", path.join(out, "subs", `${entry.name}.vtt`)]);
 
-    add(s.lang);
-    log(`Subtitulos ${s.lang} (incrustados)`);
+    log(`Subtitulos ${s.lang} (incrustados): ${entry.label ?? s.lang}`);
   }
 
   return { tracks: names, subs };
@@ -332,13 +357,18 @@ const register = async (ctx, episode, job, subs, urls) => {
   // Por defecto en espanol si hay (la interfaz lo esta); si no, el primero.
   const defaultLang = job.defaultSub ?? ((subs.find((s) => s.lang === "es") ?? subs.find((s) => s.lang.split("-")[0] === "es") ?? subs[0])?.lang);
 
+  let defaulted = false;
+
   for (const sub of subs) {
+    const isDefault = !defaulted && sub.lang === defaultLang;
+    if (isDefault) defaulted = true;
+
     await Anime.Subtitle.create({
       episodeId: episode.id,
       language: sub.lang,
-      label: subtitleName(sub.lang),
-      url: `${urls.base}subs/${sub.lang}.vtt`,
-      default: sub.lang === defaultLang,
+      label: sub.label ?? subtitleName(sub.lang),
+      url: `${urls.base}subs/${sub.name ?? sub.lang}.vtt`,
+      default: isDefault,
     });
   }
 };
