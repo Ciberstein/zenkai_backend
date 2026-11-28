@@ -42,16 +42,21 @@ const iso = (code) => {
   return ISO[value] ?? value;
 };
 
-// Nombre con el que se etiqueta una pista de subtítulos: el idioma sin región. "Español" ya cubre
-// es, es-419, es-ES o lat (los subtítulos no cambian de una variante a otra como un doblaje).
-const SUBTITLE_BASE = { lat: "es" };
+// Nombre con el que se etiqueta una pista de subtítulos: igual que un audio, con la variante
+// ("Español (España)", "Español (Latinoamérica)"), porque cada región tiene su propia traducción.
+const REGIONAL_NAME = {
+  es: "Español (España)",
+  "es-es": "Español (España)",
+  lat: "Español (Latinoamérica)",
+  "es-419": "Español (Latinoamérica)",
+};
 
 const subtitleName = (code) => {
   const lower = String(code).toLowerCase();
-  const base = SUBTITLE_BASE[lower] ?? lower.split("-")[0];
+  if (REGIONAL_NAME[lower]) return REGIONAL_NAME[lower];
 
   try {
-    const name = new Intl.DisplayNames(["es"], { type: "language" }).of(base);
+    const name = new Intl.DisplayNames(["es"], { type: "language" }).of(code);
     return name.charAt(0).toUpperCase() + name.slice(1);
   } catch {
     return code;
@@ -325,7 +330,7 @@ const register = async (ctx, episode, job, subs, urls) => {
   await Anime.Subtitle.destroy({ where: { episodeId: episode.id } });
 
   // Por defecto en espanol si hay (la interfaz lo esta); si no, el primero.
-  const defaultLang = job.defaultSub ?? (subs.some((s) => s.lang === "es") ? "es" : subs[0]?.lang);
+  const defaultLang = job.defaultSub ?? ((subs.find((s) => s.lang === "es") ?? subs.find((s) => s.lang.split("-")[0] === "es") ?? subs[0])?.lang);
 
   for (const sub of subs) {
     await Anime.Subtitle.create({
