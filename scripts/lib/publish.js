@@ -257,7 +257,11 @@ const convert = async (out, job, log) => {
     return name;
   };
 
-  const add = (lang, extra = {}) => subs.push({ lang, name: fileName(lang), ...extra });
+  const add = (lang, extra = {}) => {
+    const entry = { lang, name: fileName(lang), ...extra };
+    subs.push(entry);
+    return entry;
+  };
 
   for (const sub of job.subs ?? []) {
     const entry = add(sub.lang);
